@@ -1,0 +1,43 @@
+# Python virtual environments and local environment settings
+.venv/
+venv/
+.direnv/
+.envrc
+.env
+.env.*
+!.env.example
+
+# Python bytecode, caches, and test reports
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Python packaging outputs
+build/
+dist/
+*.egg-info/
+
+# Local FiStar records and SQLite sidecar files
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Default local exports (keep sample PDFs, TIFFs, and documentation assets)
+/fistar.csv
+/fistar.pdf
+
+# Operating system metadata
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini

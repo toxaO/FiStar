@@ -1,0 +1,6 @@
+numpy
+opencv-python-headless
+PySide6
+scipy
+tifffile
+pylinac==3.48.0

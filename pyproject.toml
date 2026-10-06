@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fistar"
+version = "1.2.0"
+description = "Starshot analysis tool with a FiRec-like stepped GUI."
+requires-python = ">=3.11"
+dependencies = ["numpy", "opencv-python-headless", "PySide6", "scipy", "tifffile", "pylinac==3.48.0"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pypdf"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fistar = ["gui/assets/icons/tools/*.png"]
