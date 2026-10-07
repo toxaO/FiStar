@@ -41,3 +41,6 @@ dist/
 ._*
 Thumbs.db
 Desktop.ini
+
+# Local UI preferences
+/fistar-preferences.ini*

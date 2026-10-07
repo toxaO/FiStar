@@ -75,7 +75,9 @@ def test_centroid_ui(qapp,tmp_path):
     w=MainWindow(database_path=tmp_path/'gui.sqlite'); s=ready.__wrapped__(); w.session=s; w.panel.session=s
     w.refresh(); w.panel.center_method.setCurrentIndex(1)
     assert s.center_method=='intersection_centroid' and not s.can_save
-    assert w.panel.intersection_table.rowCount()==3
+    assert not hasattr(w.panel,'intersection_table')
+    w.open_center_detail()
+    assert w.detail_window.table.rowCount()==3
     assert '判定なし' in w.panel.result_label.text()
     s.dirty=False; w.close()
 
@@ -123,6 +125,7 @@ def test_unavailable_centroid_cannot_confirm_or_save(qapp,tmp_path,monkeypatch):
     def fail(*args): raise ValueError('交点が非有限値です')
     monkeypatch.setattr('fistar.core.analysis.intersection_centroid',fail)
     s.set_laser(Point(3,3))
+    s.set_detection(s.detection,True)
     for step in s.steps[:5]: s.confirm_step(step)
     w=MainWindow(database_path=tmp_path/'failure.sqlite'); w.session=s; w.panel.session=s
     s.set_center_method('intersection_centroid'); w.refresh()

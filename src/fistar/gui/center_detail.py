@@ -16,13 +16,15 @@ class ScaleBar(QWidget):
 
 class SquareImagePanel(QWidget):
     """Keep the image view square within the available left pane."""
-    def __init__(self,view):
-        super().__init__(); self.view=view; self.setMinimumSize(280,280)
+    def __init__(self,view,alignment=Qt.AlignHCenter):
+        super().__init__(); self.view=view;self.alignment=alignment; self.setMinimumSize(280,280)
         view.setParent(self); view.show()
     def resizeEvent(self,event):
         super().resizeEvent(event)
         side=min(self.width(),self.height())
-        self.view.setGeometry((self.width()-side)//2,(self.height()-side)//2,side,side)
+        x=self.width()-side if self.alignment==Qt.AlignRight else (self.width()-side)//2
+        self.view.setGeometry(x,(self.height()-side)//2,side,side)
+        if not self.view.read_only and self.view._fit_full_image:self.view.reset_view()
 
 class CenterDetail(QDialog):
     """Non-modal, read-only view. Display state never touches the analysis."""
@@ -34,10 +36,6 @@ class CenterDetail(QDialog):
         self.view.reset_callback=self.center_on_result
         root=QVBoxLayout(self); tools=QHBoxLayout(); self.buttons={}
         icons=Path(__file__).parent/'assets/icons/tools'
-        for mode,name,label in (('pan','tools_hand.png','パン'),):
-            button=QToolButton(); button.setIcon(QIcon(str(icons/name))); button.setIconSize(QSize(24,24)); button.setToolTip(label); button.setAccessibleName(label); button.setCheckable(True)
-            button.clicked.connect(lambda checked=False,m=mode:self.set_mode('pan'))
-            self.buttons[mode]=button; tools.addWidget(button)
         reset=QToolButton();reset.setIcon(QIcon(str(icons/'tools_reset.png')));reset.setIconSize(QSize(24,24));reset.setToolTip('全点を収める（縮尺リセット）');reset.setAccessibleName('全点を収める');reset.clicked.connect(self.center_on_result);tools.addWidget(reset)
         self.reset_tool_button=reset
         self.scale_bar=ScaleBar(); tools.addWidget(self.scale_bar)
@@ -50,7 +48,7 @@ class CenterDetail(QDialog):
         side_layout.setContentsMargins(6,0,0,0)
         side_layout.addWidget(QLabel('交点一覧'))
         self.table=QTableWidget(0,4); self.table.setHorizontalHeaderLabels(['帯ペア','交点X','交点Y','選択した中心からの距離'])
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers); self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.setAlternatingRowColors(True);self.table.setShowGrid(False);self.table.setEditTriggers(QTableWidget.NoEditTriggers); self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         side_layout.addWidget(self.table,1)
         side_layout.addWidget(QLabel('表示する項目'))
         self.controls_scroll=QScrollArea(); self.controls_scroll.setWidgetResizable(True)

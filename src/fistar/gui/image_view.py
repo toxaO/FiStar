@@ -11,24 +11,27 @@ from fistar.core.imaging import analysis_channel, display_image
 class ImageView(QGraphicsView):
     laser_selected=Signal(object)
     calibration_selected=Signal(object,object)
+    ruler_selected=Signal(object,object)
     view_changed=Signal()
     viewport_resized=Signal()
     navigation_started=Signal()
     def __init__(self,parent=None):
         super().__init__(parent)
-        self.visibility=dict(DEFAULTS); self.read_only=False; self.reset_callback=None
+        self.visibility=dict(DEFAULTS); self.read_only=False; self.reset_callback=None;self._fit_full_image=False
         self.setScene(QGraphicsScene(self))
         self.setBackgroundBrush(QColor('#111d28'))
         self.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.setRenderHint(QPainter.Antialiasing,True)
         self.mode='pan'; self.session=None; self.selected_id=None
+        self.ruler_points=()
         self._key=None; self._pending=None; self._overlay=[]
         self._values=None; self._image_item=None; self.display_low=0.; self.display_high=1.
         self._navigation_drag=None; self._navigation_position=None
         self.set_mode('pan')
     def set_mode(self,mode):
         mode=mode or 'pan'
-        if mode not in ('pan','laser','calibration'): raise ValueError('画像操作が不正です')
+        if mode not in ('pan','laser','calibration','ruler'): raise ValueError('画像操作が不正です')
         if self.read_only: mode='pan'
         self.mode=mode; self._pending=None
         self._navigation_drag=None; self._navigation_position=None
@@ -39,6 +42,7 @@ class ImageView(QGraphicsView):
         if session.image is None: return
         key=(session.image.sha256,'luminance')
         if key!=self._key:
+            self.ruler_points=();self._pending=None
             values=analysis_channel(session.image)
             low,high=np.percentile(values,[.5,99.5])
             if high<=low: high=low+1
@@ -71,7 +75,7 @@ class ImageView(QGraphicsView):
     def reset_view(self):
         if self._image_item is None: return
         self.resetTransform(); self.setSceneRect(self._image_item.boundingRect())
-        self.fitInView(self._image_item,Qt.KeepAspectRatio)
+        self.fitInView(self._image_item,Qt.KeepAspectRatio);self._fit_full_image=True
     def endpoints(self,spoke):
         s=self.session
         hub=s.laser or Point(s.image.raw.shape[1]/2,s.image.raw.shape[0]/2)
@@ -108,9 +112,11 @@ class ImageView(QGraphicsView):
         self._overlay=[]
         s=self.session; v=self.visibility
         if not s or not s.image: return
-        if s.laser and v['search_circle']:
-            p=s.laser; r=search_radius(s.image.raw.shape,p,s.detection_settings)
-            pen=QPen(QColor('#91a2b2'),1,Qt.DashLine); pen.setCosmetic(True)
+        if v['search_circle']:
+            p=s.laser or Point(s.image.raw.shape[1]/2,s.image.raw.shape[0]/2); r=search_radius(s.image.raw.shape,p,s.detection_settings)
+            outline=QPen(QColor(20,29,38,190),4.5);outline.setCosmetic(True)
+            self._add(self.scene().addEllipse(p.x-r,p.y-r,2*r,2*r,outline))
+            pen=QPen(QColor('#ffd166'),2.5,Qt.DashLine); pen.setCosmetic(True)
             self._add(self.scene().addEllipse(p.x-r,p.y-r,2*r,2*r,pen))
         if v['lines']:
             for spoke in s.spokes:
@@ -127,6 +133,10 @@ class ImageView(QGraphicsView):
                 self._add(self.scene().addEllipse(center.x()-rx,center.y()-ry,2*rx,2*ry,pen))
             if v['offset'] and s.laser:
                 self._add(self.scene().addLine(s.laser.x,s.laser.y,center.x(),center.y(),pen))
+        if self.ruler_points:
+            pen=QPen(QColor('#ff78b5'),2);pen.setCosmetic(True)
+            if len(self.ruler_points)==2:
+                a,b=self.ruler_points;self._add(self.scene().addLine(a.x,a.y,b.x,b.y,pen))
         self.viewport().update()
     def drawForeground(self,painter,rect):
         s=self.session; v=self.visibility
@@ -172,9 +182,11 @@ class ImageView(QGraphicsView):
             for point,_,_ in data:
                 q=transform.map(point)
                 marker(q,'#18252d',3,'cross'); marker(q,'#ffffff',1.5,'cross')
+        for p in self.ruler_points:marker(screen(p),'#ff78b5',4,'cross')
         painter.restore()
     def _zoom_by(self,factor,center):
         if self._image_item is None: return
+        self._fit_full_image=False
         new_scale=self.transform().m11()*factor
         self.reserve_view_center(center,new_scale)
         self.scale(factor,factor); self.centerOn(center); self.view_changed.emit()
@@ -207,7 +219,7 @@ class ImageView(QGraphicsView):
     def mousePressEvent(self,event):
         if not self.session or not self.session.image:
             return super().mousePressEvent(event)
-        if event.button()==Qt.RightButton and self.mode=='laser' and not self.read_only:
+        if event.button()==Qt.RightButton and self.mode in ('pan','laser') and not self.read_only:
             if self._navigation_drag is None:
                 p=self._point(event)
                 if self._image_item.boundingRect().contains(QPointF(p.x,p.y)): self.laser_selected.emit(p)
@@ -222,15 +234,20 @@ class ImageView(QGraphicsView):
             event.accept(); return
         p=self._point(event)
         if not self._image_item.boundingRect().contains(QPointF(p.x,p.y)): return
-        if self.mode=='calibration':
-            if self._pending is None: self._pending=p
+        if self.mode in ('calibration','ruler'):
+            if self._pending is None:
+                self._pending=p
+                if self.mode=='ruler':self.ruler_points=(p,);self.draw_overlay();self.view_changed.emit()
             else:
                 first=self._pending; self._pending=None
-                self.calibration_selected.emit(first,p)
+                if self.mode=='ruler':
+                    self.ruler_points=(first,p);self.draw_overlay();self.ruler_selected.emit(first,p)
+                else:self.calibration_selected.emit(first,p)
         event.accept()
     def mouseMoveEvent(self,event):
         if self._navigation_drag:
             delta=event.position()-self._navigation_position
+            if not delta.isNull():self._fit_full_image=False
             scale=self.transform().m11()
             center=self.mapToScene(self.viewport().rect()).boundingRect().center()-delta/scale
             self.reserve_view_center(center,scale); self.centerOn(center)

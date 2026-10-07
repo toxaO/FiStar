@@ -16,15 +16,13 @@ def test_new_defaults_and_removed_choices(qapp,tmp_path):
     w.session.dirty=False;w.close()
 
 
-def test_laser_confirmation_switches_to_pan(qapp,tmp_path):
+def test_laser_does_not_need_a_confirmation_frame(qapp,tmp_path):
     w=MainWindow(database_path=tmp_path/'db.sqlite');s=w.session
     s.set_image(LoadedImage(tmp_path/'one.tif',np.zeros((100,100),np.uint16),'one',None))
-    for step in s.steps[:3]:s.confirm_step(step)
-    s.set_laser(Point(50,50));w.set_mode('laser');w.refresh()
-    w.panel.confirm_buttons['laser'].click()
-    assert 'laser' in s.confirmed_steps and w.view.mode=='pan'
+    s.set_laser(Point(50,50));w.refresh()
+    assert 'laser' not in w.panel.stage_boxes and w.panel.detect_button.isEnabled()
+    assert w.view.mode=='pan'
     s.dirty=False;w.close()
-
 
 def test_wheel_zoom_uses_display_center_and_preserves_analysis(qapp,tmp_path):
     from tests.test_session import ready
@@ -56,11 +54,11 @@ def test_luminance_display_and_legacy_channel_protection(qapp,tmp_path):
     w.session.dirty=False;w.close()
 
 
-def test_detail_has_only_pan_and_reset(qapp,tmp_path):
+def test_detail_has_only_reset(qapp,tmp_path):
     from tests.test_session import ready
     w=MainWindow(database_path=tmp_path/'db.sqlite');w.session=ready.__wrapped__();w.panel.session=w.session
     w.refresh();w.show();qapp.processEvents();w.open_center_detail();qapp.processEvents();d=w.detail_window
-    assert set(d.buttons)=={'pan'}
+    assert not d.buttons
     assert d.reset_tool_button.icon().isNull()==False
     before=d.view.transform().m11()
     event=QWheelEvent(QPointF(5,5),QPointF(5,5),QPoint(),QPoint(0,120),Qt.NoButton,Qt.NoModifier,Qt.ScrollUpdate,False)

@@ -19,7 +19,7 @@ def ready():
 
 def test_save_gated_and_snapshot(ready):
     assert ready.can_save
-    assert ready.snapshot()['schema_version']==3
+    assert ready.snapshot()['schema_version']==4
     ready.set_laser(Point(3,3))
     assert not ready.can_save
     assert len(ready.spokes)==3

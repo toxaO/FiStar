@@ -14,6 +14,8 @@ class AnalysisSession:
         self.device='temp'
         self.axis='gantry'
         self.calibration=None
+        self.calibration_mode='none'; self.calibration_error=''
+        self._detection_inputs=None
         self.laser=None
         self.spokes=()
         self.detection=None
@@ -24,7 +26,7 @@ class AnalysisSession:
         self.error=''
         self.confirmed_steps=set()
     def _change(self, step):
-        self.revision+=1; self.dirty=True
+        self.revision+=1; self.dirty=self.image is not None
         self.confirmed_steps.difference_update(self.steps[self.steps.index(step):])
         self._evaluate()
     def _evaluate(self):
@@ -35,27 +37,31 @@ class AnalysisSession:
                 self.analysis_at=datetime.now().astimezone().isoformat()
             except ValueError as e: self.error=str(e)
     def set_image(self,image):
-        revision=self.revision
-        self.__init__(); self.revision=revision
-        self.image=image; self.calibration=image.tagged_calibration
+        revision=self.revision;axis=self.axis
+        self.__init__(); self.revision=revision;self.axis=axis
+        self.image=image
         self.detection_settings=DetectionSettings()
         self._change('image')
     def set_identity(self,device,axis):
         if axis not in ('gantry','collimator','couch'): raise ValueError('回転軸が不正です')
-        if (device.strip(),axis)==(self.device,self.axis): return
-        self.device=device.strip(); self.axis=axis; self._change('identity')
+        device=device.strip() or 'temp'
+        if (device,axis)==(self.device,self.axis): return
+        self.device=device; self.axis=axis; self._change('identity')
     def set_channel(self,channel,discard_edits=False):
         if channel!='luminance': raise ValueError('解析は輝度固定です')
         if any(s.origin=='manual' for s in self.spokes) and not discard_edits:
             raise ValueError('チャンネル変更には手動修正を破棄する確認が必要です')
         self.channel=channel; self.spokes=(); self.detection=None; self._change('image')
-    def set_calibration(self,calibration):
+    def set_calibration(self,calibration,mode=None,error=''):
+        self.calibration_mode=mode or ('tag' if calibration and calibration.source=='TIFF' else 'manual' if calibration and calibration.reference else 'numeric' if calibration else 'none')
+        self.calibration_error=error
         self.calibration=calibration; self._change('calibration')
     def set_laser(self,laser):
         if not self.image or not (0<=laser.x<self.image.raw.shape[1] and 0<=laser.y<self.image.raw.shape[0]):
             raise ValueError('画像内のレーザー点を指定してください')
         self.laser=laser; self._change('laser')
     def set_detection_settings(self,settings):
+        if settings==self.detection_settings: return
         self.detection_settings=settings; self._change('spokes')
     def set_detection(self,detection,discard_edits=False):
         if any(s.origin=='manual' for s in self.spokes) and not discard_edits:
@@ -63,7 +69,8 @@ class AnalysisSession:
         self.channel='luminance'
         self.detection=detection
         if isinstance(detection.settings,DetectionSettings): self.detection_settings=detection.settings
-        self.spokes=detection.spokes; self._change('spokes')
+        self.spokes=detection.spokes; self._detection_inputs=self.detection_inputs
+        self._change('spokes')
     def apply_detection(self,revision,image_hash,detection,discard_edits=False):
         if revision!=self.revision or not self.image or image_hash!=self.image.sha256: return False
         self.set_detection(detection,discard_edits); return True
@@ -76,7 +83,7 @@ class AnalysisSession:
         if method not in ('minimax','intersection_centroid'): raise ValueError('中心推定方式が不正です')
         if method==self.center_method: return
         self.center_method=method
-        self.revision+=1; self.dirty=True; self.confirmed_steps.discard('result')
+        self.revision+=1; self.dirty=self.image is not None; self.confirmed_steps.discard('result')
         if self.result:
             if method=='intersection_centroid' and self.result.centroid_pixels is None and not self.result.centroid_error:
                 pixels,physical,error=evaluate_centroids(self.spokes,self.laser,self.calibration)
@@ -88,8 +95,7 @@ class AnalysisSession:
 
     def confirm_step(self,step):
         index=self.steps.index(step)
-        if not all(s in self.confirmed_steps for s in self.steps[:index]):
-            raise ValueError('前の段階を確認してください')
+        if step=='result' and not self.ready_for_review: raise ValueError(self.readiness_message)
         if step=='image' and self.image is None: raise ValueError('画像を選択してください')
         if step=='identity' and not self.device: raise ValueError('装置名を入力してください')
         if step=='result' and self.channel!='luminance': raise ValueError('旧記録の解析チャンネルを保持しています。輝度で再検出してから結果を確認してください')
@@ -97,8 +103,31 @@ class AnalysisSession:
         if step in ('spokes','result') and (self.result is None or (step=='result' and self.result.selected is None)): raise ValueError(self.error or (self.result.centroid_error if self.result else '') or '有効な中心線が必要です')
         self.confirmed_steps.add(step); self.dirty=True
     @property
+    def detection_inputs(self):
+        return (self.image.sha256 if self.image else None,self.channel,self.laser,self.detection_settings)
+    @property
+    def requires_redetection(self):
+        return self.detection is None or self._detection_inputs!=self.detection_inputs
+    @property
+    def can_detect(self):
+        return self.image is not None and self.laser is not None and not self.calibration_error and (self.calibration_mode=='none' or self.calibration is not None)
+    @property
+    def readiness_message(self):
+        if self.image is None: return '画像を開いてください'
+        if self.calibration_error: return self.calibration_error
+        if self.calibration_mode!='none' and self.calibration is None:return '選択した方法の校正を完了してください'
+        if self.laser is None: return '画像上で右クリックしてレーザー基準点を指定してください'
+        if self.channel!='luminance': return '旧記録を輝度で再検出してください'
+        if self.requires_redetection: return '再検出が必要です。レーザー位置と検出条件を確認し「照射帯を検出」を押してください'
+        if self.result is None: return self.error or '有効な中心線が不足しています'
+        if self.result.selected is None: return self.result.centroid_error or '選択方式を計算できません'
+        return ''
+    @property
+    def ready_for_review(self):
+        return not self.readiness_message
+    @property
     def can_save(self):
-        return self.channel=='luminance' and self.result is not None and self.result.selected is not None and set(self.steps)<=self.confirmed_steps
+        return self.ready_for_review and 'result' in self.confirmed_steps
     def snapshot(self):
         metadata=None
         if self.detection:
@@ -108,7 +137,7 @@ class AnalysisSession:
                       'points':[asdict(p) for p in d.points],
                       'search_center':asdict(d.search_center) if d.search_center else None,
                       'radius_px':d.radius_px,'warnings':list(d.warnings)}
-        return {'schema_version':3,'app_version':'1.2.0','algorithm_version':'fistar-1.2','center_method':self.center_method,
+        return {'schema_version':4,'calibration_mode':self.calibration_mode,'app_version':'1.2.0','algorithm_version':'fistar-1.2','center_method':self.center_method,
                 'image_path':str(self.image.path) if self.image else None,
                 'image_sha256':self.image.sha256 if self.image else None,
                 'channel':self.channel,'channel_transform':'0.299R+0.587G+0.114B' if self.channel=='luminance' else self.channel,'calibration':asdict(self.calibration) if self.calibration else None,
@@ -118,7 +147,7 @@ class AnalysisSession:
                 'detected_spokes':[asdict(s) for s in self.detection.spokes] if self.detection else [],
                 'spokes':[asdict(s) for s in self.spokes], 'confirmed_steps':sorted(self.confirmed_steps)}
     def measurement(self,limits):
-        if not self.can_save: raise ValueError('全段階の確認後に保存できます')
+        if not self.can_save: raise ValueError(self.readiness_message or '結果の確認後に保存できます')
         return Measurement(str(uuid4()),self.analysis_at,self.device,self.axis,
                            self.image.path.name,self.result,limits,Judgment('not_evaluated','not_evaluated') if self.center_method=='intersection_centroid' else judge(self.result.primary,limits),self.snapshot())
     def restore(self,image,record):
@@ -156,4 +185,6 @@ class AnalysisSession:
         self.result=record.result
         self.center_method=record.result.center_method
         self.analysis_at=record.created_at
-        self.confirmed_steps=set(self.steps[:-1]); self.dirty=False
+        self.calibration_mode=data.get('calibration_mode') or ('tag' if self.calibration and self.calibration.source=='TIFF' else 'manual' if self.calibration and self.calibration.reference else 'numeric' if self.calibration else 'none')
+        self._detection_inputs=self.detection_inputs if self.detection else None
+        self.confirmed_steps=set(); self.dirty=False

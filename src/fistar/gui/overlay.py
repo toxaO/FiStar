@@ -1,20 +1,25 @@
 """View-only overlay options and screen-space label placement."""
 from PySide6.QtCore import Qt,QRectF,QPointF
 from PySide6.QtGui import QFont,QFontMetricsF
-from PySide6.QtWidgets import QWidget,QGridLayout,QCheckBox
+from PySide6.QtWidgets import QWidget,QGridLayout,QCheckBox,QSizePolicy
 
 LABELS={'laser':'レーザー点','search_circle':'探索円','detection_points':'検出点','lines':'中心線','band_labels':'帯番号','intersections':'交点','intersection_labels':'交点ラベル','center':'推定中心','evaluation_circle':'評価円','offset':'偏位線'}
 DEFAULTS={key:key!='intersection_labels' for key in LABELS}
 DETAIL_DEFAULTS={**DEFAULTS,'image':True,'band_labels':False,'intersection_labels':True,'search_circle':False,'detection_points':False,'evaluation_circle':False,'offset':False}
 
 class OverlayControls(QWidget):
-    def __init__(self,view,parent=None):
+    def __init__(self,view,parent=None,columns=3,balanced=False):
         super().__init__(parent); layout=QGridLayout(self); self.checks={}
+        layout.setContentsMargins(4,4,4,4);layout.setHorizontalSpacing(8);layout.setVerticalSpacing(4)
+        layout.setAlignment(Qt.AlignTop if balanced else Qt.AlignLeft|Qt.AlignTop)
+        if balanced:
+            layout.setHorizontalSpacing(18)
+            for column in range(columns):layout.setColumnStretch(column,1)
         labels=({'image':'画像',**LABELS} if 'image' in view.visibility else LABELS)
         for i,(key,label) in enumerate(labels.items()):
-            check=QCheckBox(label); check.setChecked(view.visibility[key]); self.checks[key]=check
+            check=QCheckBox(label);check.setSizePolicy(QSizePolicy.Expanding if balanced else QSizePolicy.Maximum,QSizePolicy.Fixed); check.setChecked(view.visibility[key]); self.checks[key]=check
             check.toggled.connect(lambda checked,k=key:view.set_visibility(k,checked))
-            layout.addWidget(check,i//3,i%3)
+            layout.addWidget(check,i//columns,i%columns)
 
 def overlay_font():
     font=QFont(); font.setPixelSize(12); return font

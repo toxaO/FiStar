@@ -31,11 +31,11 @@ def test_detection_fields_restore_and_reset(qapp,tmp_path):
     from fistar.core.models import LoadedImage,DetectionSettings
     w=MainWindow(database_path=tmp_path/'db.sqlite')
     w.session.set_image(LoadedImage(tmp_path/'one.tif',np.zeros((100,100),np.uint16),'one',None))
-    w.session.set_detection_settings(DetectionSettings(.65,.4,'bright')); w.refresh()
+    w.session.set_detection_settings(DetectionSettings(.65,.4,'dark')); w.refresh()
     assert w.panel.radius.value()==65 and w.panel.peak_height.value()==40
-    assert w.panel.polarity.currentData()=='bright'
+    assert not hasattr(w.panel,'polarity')
     w.session.set_image(LoadedImage(tmp_path/'two.tif',np.zeros((100,100),np.uint16),'two',None)); w.refresh()
-    assert w.panel.radius.value()==85 and w.panel.peak_height.value()==25 and w.panel.polarity.currentData()=='dark'
+    assert w.panel.radius.value()==85 and w.panel.peak_height.value()==25
     w.session.dirty=False; w.close()
 
 def test_display_adjustment_preserves_raw_and_state(qapp,tmp_path):
@@ -47,7 +47,7 @@ def test_display_adjustment_preserves_raw_and_state(qapp,tmp_path):
     w.view.set_display_range(2000,4000)
     assert w.session.revision==revision
     np.testing.assert_array_equal(w.session.image.raw,raw)
-    assert '100' in w.panel.image_label.text() and '16' in w.panel.image_label.text()
+    assert '100' in w.image_info.text() and '16' in w.image_info.text()
     w.session.dirty=False; w.close()
 
 def test_no_profile_widget(qapp,tmp_path):
@@ -55,14 +55,14 @@ def test_no_profile_widget(qapp,tmp_path):
     assert not hasattr(w.panel,'profile')
     w.close()
 
-def test_stage_controls_require_predecessors(qapp,tmp_path):
+def test_inputs_are_available_without_stage_confirmations(qapp,tmp_path):
     w=MainWindow(database_path=tmp_path/'db.sqlite')
-    assert not w.panel.device.isEnabled()
+    assert w.panel.device.isEnabled() and not w.panel.confirm_buttons
     w.session.set_image(__import__('fistar.core.models',fromlist=['LoadedImage']).LoadedImage(tmp_path/'one.tif',np.zeros((10,10),np.uint16),'hash',None)); w.refresh()
-    assert not w.panel.device.isEnabled()
-    w.session.confirm_step('image'); w.refresh()
-    assert w.panel.device.isEnabled()
-    assert not w.panel.known_length.isEnabled()
+    assert w.panel.device.isEnabled() and w.panel.calibration_method.isEnabled()
+    assert not w.panel.detect_button.isEnabled()
+    w.session.set_laser(__import__('fistar.core.models',fromlist=['Point']).Point(2,2));w.refresh()
+    assert w.panel.detect_button.isEnabled()
     w.session.dirty=False; w.close()
 
 def test_save_failure_keeps_confirmed_work(qapp,tmp_path):
