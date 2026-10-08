@@ -334,3 +334,8 @@ PDF専用テストと既存出力テスト11件PASS。同梱TIFF2枚×両方式�
 ## 操作マニュアルの字体変更（2026-10-08）
 
 Arial UnicodeからHiragino Sans（ヒラギノ角ゴシック系）へ変更。本文W3と見出し・強調W6を使い、Qt PDFで埋め込み。マニュアル生成用一時スクリプトも新字体の版へ差替え。全10ページの改ページ・画像・表を確認、章しおりを維持。PDF内のフォント埋め込みを検証。
+
+
+## 公開ライセンス整理（2026-10-08）
+
+ユーザーの指定でMIT、著作権者2026 toxaO。自作のFiRecツールアイコン、サンプルTIFF、マニュアル画像にもMITを適用する許可を確認。LICENSE、README、pyproject.tomlを整備。THIRD_PARTY_NOTICESへ主要依存とWindows Qt配布条件を記載し、配布パッケージの通知全文をlicenses/third-partyへ保存。GNU公式LGPL3/GPL3全文を保存。wheelを/tmpへビルドし、ライセンス文書の同梱を確認。Windows実行ファイルの依存監査・差替え試験はビルド段階の作業として未実施。コミット・pushは未実施。
