@@ -2,7 +2,7 @@ from dataclasses import asdict, replace
 from datetime import datetime
 from uuid import uuid4
 from fistar.core.models import *
-from fistar.core.analysis import evaluate_spokes, evaluate_centroids, judge
+from fistar.core.analysis import evaluate_spokes, evaluate_centroids
 
 class AnalysisSession:
     steps=('image','identity','calibration','laser','spokes','result')
@@ -11,8 +11,8 @@ class AnalysisSession:
         self.dirty=False
         self.image=None
         self.channel='luminance'
-        self.device='temp'
-        self.axis='gantry'
+        self.device=''
+        self.axis='gantry';self.axis_definition={}
         self.calibration=None
         self.calibration_mode='none'; self.calibration_error=''
         self._detection_inputs=None
@@ -43,8 +43,8 @@ class AnalysisSession:
         self.detection_settings=DetectionSettings()
         self._change('image')
     def set_identity(self,device,axis):
-        if axis not in ('gantry','collimator','couch'): raise ValueError('回転軸が不正です')
-        device=device.strip() or 'temp'
+        if not axis: raise ValueError('回転軸を選択してください')
+        device=device.strip()
         if (device,axis)==(self.device,self.axis): return
         self.device=device; self.axis=axis; self._change('identity')
     def set_channel(self,channel,discard_edits=False):
@@ -97,7 +97,6 @@ class AnalysisSession:
         index=self.steps.index(step)
         if step=='result' and not self.ready_for_review: raise ValueError(self.readiness_message)
         if step=='image' and self.image is None: raise ValueError('画像を選択してください')
-        if step=='identity' and not self.device: raise ValueError('装置名を入力してください')
         if step=='result' and self.channel!='luminance': raise ValueError('旧記録の解析チャンネルを保持しています。輝度で再検出してから結果を確認してください')
         if step=='laser' and self.laser is None: raise ValueError('レーザー点を指定してください')
         if step in ('spokes','result') and (self.result is None or (step=='result' and self.result.selected is None)): raise ValueError(self.error or (self.result.centroid_error if self.result else '') or '有効な中心線が必要です')
@@ -116,7 +115,7 @@ class AnalysisSession:
         if self.image is None: return '画像を開いてください'
         if self.calibration_error: return self.calibration_error
         if self.calibration_mode!='none' and self.calibration is None:return '選択した方法の校正を完了してください'
-        if self.laser is None: return '画像上で右クリックしてレーザー基準点を指定してください'
+        if self.laser is None: return '基準点選択ボタンを押し、画像上でレーザー基準点を指定してください'
         if self.channel!='luminance': return '旧記録を輝度で再検出してください'
         if self.requires_redetection: return '再検出が必要です。レーザー位置と検出条件を確認し「照射帯を検出」を押してください'
         if self.result is None: return self.error or '有効な中心線が不足しています'
@@ -137,7 +136,7 @@ class AnalysisSession:
                       'points':[asdict(p) for p in d.points],
                       'search_center':asdict(d.search_center) if d.search_center else None,
                       'radius_px':d.radius_px,'warnings':list(d.warnings)}
-        return {'schema_version':4,'calibration_mode':self.calibration_mode,'app_version':'1.2.0','algorithm_version':'fistar-1.2','center_method':self.center_method,
+        return {'schema_version':5,'laser_delta_y_positive':'up','axis_definition':self.axis_definition,'judgment_enabled':False,'calibration_mode':self.calibration_mode,'app_version':'1.2.0','algorithm_version':'fistar-1.2','center_method':self.center_method,
                 'image_path':str(self.image.path) if self.image else None,
                 'image_sha256':self.image.sha256 if self.image else None,
                 'channel':self.channel,'channel_transform':'0.299R+0.587G+0.114B' if self.channel=='luminance' else self.channel,'calibration':asdict(self.calibration) if self.calibration else None,
@@ -146,12 +145,13 @@ class AnalysisSession:
                 'detection_metadata':metadata,
                 'detected_spokes':[asdict(s) for s in self.detection.spokes] if self.detection else [],
                 'spokes':[asdict(s) for s in self.spokes], 'confirmed_steps':sorted(self.confirmed_steps)}
-    def measurement(self,limits):
+    def measurement(self,limits=None):
         if not self.can_save: raise ValueError(self.readiness_message or '結果の確認後に保存できます')
         return Measurement(str(uuid4()),self.analysis_at,self.device,self.axis,
-                           self.image.path.name,self.result,limits,Judgment('not_evaluated','not_evaluated') if self.center_method=='intersection_centroid' else judge(self.result.primary,limits),self.snapshot())
+                           self.image.path.name,self.result,Limits(),Judgment('not_evaluated','not_evaluated'),self.snapshot())
     def restore(self,image,record):
         data=record.snapshot
+        self.axis_definition=data.get("axis_definition",{})
         if image.sha256!=data['image_sha256']: raise ValueError('元画像が一致しません')
         self.set_image(image); self.device=record.device; self.axis=record.axis; self.channel=data['channel']
         c=data['calibration']

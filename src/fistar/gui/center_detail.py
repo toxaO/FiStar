@@ -36,7 +36,7 @@ class CenterDetail(QDialog):
         self.view.reset_callback=self.center_on_result
         root=QVBoxLayout(self); tools=QHBoxLayout(); self.buttons={}
         icons=Path(__file__).parent/'assets/icons/tools'
-        reset=QToolButton();reset.setIcon(QIcon(str(icons/'tools_reset.png')));reset.setIconSize(QSize(24,24));reset.setToolTip('全点を収める（縮尺リセット）');reset.setAccessibleName('全点を収める');reset.clicked.connect(self.center_on_result);tools.addWidget(reset)
+        reset=QToolButton();reset.setProperty('imageTool',True);reset.setIcon(QIcon(str(icons/'tools_reset.png')));reset.setIconSize(QSize(24,24));reset.setToolTip('全点を収める（縮尺リセット）');reset.setAccessibleName('全点を収める');reset.clicked.connect(self.center_on_result);tools.addWidget(reset)
         self.reset_tool_button=reset
         self.scale_bar=ScaleBar(); tools.addWidget(self.scale_bar)
         self.scale_label=QLabel(); tools.addWidget(self.scale_label); tools.addStretch(); root.addLayout(tools)

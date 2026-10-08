@@ -85,7 +85,7 @@ def intersection_centroid(spokes, laser: Point, unit: str):
     with np.errstate(over='ignore',invalid='ignore'):
         center=np.sum(np.array([(p.x,p.y) for _,p in points])/len(points),axis=0)
     c=Point(float(center[0]),float(center[1]))
-    delta=Point(c.x-laser.x,c.y-laser.y)
+    delta=Point(c.x-laser.x,laser.y-c.y)
     intersections=tuple(Intersection(pair,p,math.hypot(p.x-c.x,p.y-c.y)) for pair,p in points)
     distance=math.hypot(delta.x,delta.y); maximum=max(p.distance for p in intersections)
     if not all(math.isfinite(v) for v in (*center,delta.x,delta.y,distance,maximum)):

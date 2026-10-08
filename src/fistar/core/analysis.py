@@ -8,7 +8,7 @@ def evaluate_spokes(spokes: tuple[Spoke,...], laser: Point, calibration: Calibra
     active = tuple(s for s in spokes if not s.excluded)
     def metric(lines, point, unit):
         circle = minimax_circle(lines)
-        delta = Point(circle.center.x-point.x,circle.center.y-point.y)
+        delta = Point(circle.center.x-point.x,point.y-circle.center.y)
         return MetricResult(unit,circle,delta,math.hypot(delta.x,delta.y))
     pixels = metric(tuple(s.line for s in active),laser,'px')
     physical = None

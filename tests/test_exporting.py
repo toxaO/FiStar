@@ -13,11 +13,11 @@ def test_csv_header_and_quoted_japanese(tmp_path,measurement):
     assert rows[0]['装置名']=='装置,改行\n日本語'
     assert float(rows[0]['半径'])==.123456789
 
-def test_one_page_japanese_pdf(qapp,tmp_path,measurement):
+def test_report_japanese_pdf(qapp,tmp_path,measurement):
     p=tmp_path/'report.pdf'
     export_pdf(replace(measurement,device='治療装置'+('長い名称'*25),image_name='画像'+('長いファイル名'*30)+'.tif'),p)
     reader=PdfReader(p)
-    assert len(reader.pages)==1
+    assert len(reader.pages)==2
     text=reader.pages[0].extract_text()
     assert 'FiStar' in text and '0.1235' in text
     assert '治療装置' in text.replace(' ','')

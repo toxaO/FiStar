@@ -19,4 +19,4 @@ pythonpath = ["src"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-fistar = ["gui/assets/icons/tools/*.png", "gui/assets/icons/*.svg"]
+fistar = ["gui/assets/*.png", "gui/assets/*.ico", "gui/assets/icons/tools/*.png", "gui/assets/icons/*.svg"]

@@ -10,6 +10,7 @@ from fistar.core.imaging import analysis_channel, display_image
 
 class ImageView(QGraphicsView):
     laser_selected=Signal(object)
+    laser_selection_finished=Signal()
     calibration_selected=Signal(object,object)
     ruler_selected=Signal(object,object)
     view_changed=Signal()
@@ -33,7 +34,8 @@ class ImageView(QGraphicsView):
         mode=mode or 'pan'
         if mode not in ('pan','laser','calibration','ruler'): raise ValueError('画像操作が不正です')
         if self.read_only: mode='pan'
-        self.mode=mode; self._pending=None
+        self.mode=mode; self._pending=None;self._laser_preview=None;self._laser_start=None
+        self.viewport().update()
         self._navigation_drag=None; self._navigation_position=None
         self.setDragMode(QGraphicsView.NoDrag)
         self.setCursor(Qt.OpenHandCursor if mode=='pan' else Qt.CrossCursor)
@@ -143,6 +145,16 @@ class ImageView(QGraphicsView):
         if not s or not s.image: return
         painter.save(); painter.resetTransform(); painter.setRenderHint(QPainter.Antialiasing,True)
         painter.setFont(overlay_font()); transform=self.viewportTransform()
+        labels=getattr(s,'axis_definition',{})
+        width=self.viewport().width();height=self.viewport().height()
+        metrics=painter.fontMetrics()
+        for key,x,y in [('top',width/2,20),('bottom',width/2,height-12),('left',24,height/2),('right',width-24,height/2)]:
+            text=labels.get(key,'')
+            if not text:continue
+            tw=metrics.horizontalAdvance(text);th=metrics.height()
+            x=max(tw/2+5,min(width-tw/2-5,x))
+            painter.fillRect(int(x-tw/2-4),int(y-metrics.ascent()-3),tw+8,th+6,QColor('#17232d'))
+            painter.setPen(QColor('#ffffff'));painter.drawText(QPointF(x-tw/2,y),text)
         def screen(p): return transform.map(QPointF(p.x,p.y))
         def marker(point,color,radius=3,shape='circle'):
             painter.setPen(QPen(QColor(color),1)); painter.setBrush(Qt.NoBrush)
@@ -150,7 +162,8 @@ class ImageView(QGraphicsView):
                 painter.drawLine(point+QPointF(-radius,0),point+QPointF(radius,0))
                 painter.drawLine(point+QPointF(0,-radius),point+QPointF(0,radius))
             else: painter.drawEllipse(point,radius,radius)
-        if s.laser and v['laser']: marker(screen(s.laser),'#26d6ed',6,'cross')
+        laser=self._laser_preview or s.laser
+        if laser and (v['laser'] or self.mode=='laser'): marker(screen(laser),'#26d6ed',6,'cross')
         center=self.selected_center()
         if center is not None and v['center']:
             marker(transform.map(center),'#ff6262' if s.center_method=='intersection_centroid' else '#c181ff',7)
@@ -219,13 +232,14 @@ class ImageView(QGraphicsView):
     def mousePressEvent(self,event):
         if not self.session or not self.session.image:
             return super().mousePressEvent(event)
-        if event.button()==Qt.RightButton and self.mode in ('pan','laser') and not self.read_only:
-            if self._navigation_drag is None:
-                p=self._point(event)
-                if self._image_item.boundingRect().contains(QPointF(p.x,p.y)): self.laser_selected.emit(p)
-            event.accept(); return
-        if event.button()!=Qt.LeftButton: return super().mousePressEvent(event)
-        if self.mode in ('pan','laser'):
+        if event.button()!=Qt.LeftButton:return super().mousePressEvent(event)
+        if self.mode=='laser' and not self.read_only:
+            point=self._point(event)
+            if self._image_item.boundingRect().contains(QPointF(point.x,point.y)):
+                self._laser_start=point
+                self._laser_preview=point;self.viewport().update()
+            event.accept();return
+        if self.mode=='pan':
             self.navigation_started.emit()
             self._navigation_drag='pan'; self._navigation_position=event.position()
             self.setCursor(Qt.ClosedHandCursor)
@@ -245,6 +259,8 @@ class ImageView(QGraphicsView):
                 else:self.calibration_selected.emit(first,p)
         event.accept()
     def mouseMoveEvent(self,event):
+        if self.mode=='laser' and self._laser_start is not None:
+            event.accept();return
         if self._navigation_drag:
             delta=event.position()-self._navigation_position
             if not delta.isNull():self._fit_full_image=False
@@ -255,6 +271,12 @@ class ImageView(QGraphicsView):
             event.accept(); return
         super().mouseMoveEvent(event)
     def mouseReleaseEvent(self,event):
+        if self.mode=='laser' and event.button()==Qt.LeftButton and self._laser_start is not None:
+            point=self._point(event)
+            moved=math.hypot(point.x-self._laser_start.x,point.y-self._laser_start.y)*self.transform().m11()>3
+            self._laser_start=None;self._laser_preview=None
+            if not moved and self._image_item.boundingRect().contains(QPointF(point.x,point.y)):self.laser_selected.emit(point)
+            self.laser_selection_finished.emit();self.viewport().update();event.accept();return
         if self._navigation_drag:
             self._navigation_drag=None; self._navigation_position=None
             self.setCursor(Qt.OpenHandCursor if self.mode=='pan' else Qt.CrossCursor); event.accept(); return
