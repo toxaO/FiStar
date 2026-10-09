@@ -11,6 +11,7 @@ license = {file = "LICENSE"}
 dependencies = ["numpy", "opencv-python-headless", "PySide6", "scipy", "tifffile", "pylinac==3.48.0"]
 
 [project.optional-dependencies]
+build = ["pyinstaller>=6.11,<7", "pillow"]
 dev = ["pytest", "pypdf"]
 
 [tool.pytest.ini_options]
@@ -23,4 +24,4 @@ license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/**/*.txt", "lice
 where = ["src"]
 
 [tool.setuptools.package-data]
-fistar = ["gui/assets/*.png", "gui/assets/*.ico", "gui/assets/icons/tools/*.png", "gui/assets/icons/*.svg"]
+fistar = ["gui/assets/*.png", "gui/assets/*.ico", "gui/assets/*.icns", "gui/assets/icons/tools/*.png", "gui/assets/icons/*.svg"]

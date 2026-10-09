@@ -339,3 +339,27 @@ Arial UnicodeからHiragino Sans（ヒラギノ角ゴシック系）へ変更。
 ## 公開ライセンス整理（2026-10-08）
 
 ユーザーの指定でMIT、著作権者2026 toxaO。自作のFiRecツールアイコン、サンプルTIFF、マニュアル画像にもMITを適用する許可を確認。LICENSE、README、pyproject.tomlを整備。THIRD_PARTY_NOTICESへ主要依存とWindows Qt配布条件を記載し、配布パッケージの通知全文をlicenses/third-partyへ保存。GNU公式LGPL3/GPL3全文を保存。wheelを/tmpへビルドし、ライセンス文書の同梱を確認。Windows実行ファイルの依存監査・差替え試験はビルド段階の作業として未実施。コミット・pushは未実施。
+
+
+## OS別onefileビルド（2026-10-09）
+
+PyInstaller 6.22.3をプロジェクト.venvへ導入。scripts/build.py共通処理とmacOSシェル・Windows PowerShellを追加。ICNS/ICO、アプリ素材、Pylinacメタデータを同梱、出力先へライセンス資料・マニュアルをコピー。macOS arm64のFiStar.appを生成、アドホック署名・アイコン確認。隔離smoke-testでfrozen=true、画像読込・9本検出・画面・PDF2ページ確認。サンドボックス外で実行した一時DBのみ使用。本番記録へのアクセスなし。Windowsのビルド・署名公証は未実施。
+
+
+## macOS Dock・起動速度改善（2026-10-09）
+
+onefileの親子プロセスと毎回展開を避け、macOS既定をonedir .appに変更。Windows onefileは維持。起動時Pylinac/Matplotlib初期化が約18秒を占めることをimporttimeで確認し、検出関数内の遅延importへ変更。GUIモジュール読込19.36→1.06秒。検出・PDFテスト26件PASS（3.99秒）。再ビルドの署名確認、隔離frozen実行で画面表示3.46秒、単一PID、起動時backend未読込、9本検出・PDF出力成功。通常Dockの視認確認は未実施。
+
+
+## 両OS onedir・準備ワーカー・永続キャッシュ（2026-10-09）
+
+両OS onedirへ統一。起動後専用ワーカーで準備、検出を1件待機し、revisionと入力一致時だけ実行。失敗時の再試行、終了待機を実装。キャッシュは記録と分離、Matplotlib/Python/OS/配置/実行ファイル更新で識別し、壊れたJSON・書込不能時は一時領域に退避。Matplotlibをimportする前にPyInstallerの一時MPLCONFIGDIRを上書き。隔離smokeは一時DB・INI、専用cacheのみ使用。
+
+準備・検出・PDF・交点回帰47件PASS（20.84秒）、追加の移動・更新識別を含む準備テスト10件PASS。macOS frozenで初回準備21.29秒→再利用1.57秒、画面4.20→2.64秒、検出0.12→0.10秒、両方9本検出・PDF成功。本番DBと設定ハッシュ不変、成果物にDB/設定なし。Windowsは実機未検証。マニュアル更新・第10ページ確認。
+
+
+## ポータブルdata・JPEG参考画像・複数削除（2026-10-09）
+
+既定の保存先をexe/.app隣のdataに変更。DB・INI・images/JPEGを相対参照で保持。JPEGは元と同じ画素寸法・自動表示輝度8bit・quality95で、再解析には使わない。解析再開UIを撤去し、参考画像の閲覧専用表示を追加。記録をExtendedSelectionで複数選択、件数確認後にDBと未共有JPEGを削除。旧DBは設定から明示的に読取専用取込、元TIFFが読める場合JPEGへ変換し、欠落時も数値を保存。元DB・TIFF変更なし。
+
+JPEG保存・移植・PDF・旧記録取込・複数削除・準備回帰・サンプル統合32件PASS、追加の閲覧専用ケースを含むポータブル8件PASS。macOS再ビルド署名確認・一時DBでfrozen JPEG保存/PDF成功、配布data空、本番DB/INI hash不変。マニュアル本文・記録画面例・PDF10ページ更新。Windows実機未検証。

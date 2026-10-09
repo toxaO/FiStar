@@ -40,9 +40,9 @@ def japanese_font():
             return font
     raise ValueError('日本語対応フォントが見つかりません。日本語フォントを導入してください')
 
-def export_pdf(record,path,comment="",trend_records=(),period_label=""):
+def export_pdf(record,path,comment="",trend_records=(),period_label="",data_dir=None):
     if QApplication.instance() is None:raise ValueError('PDF出力には起動中のQtアプリケーションが必要です')
     from .pdf_report import write_report
     with atomic_output(path) as temporary:
-        write_report(record,temporary,japanese_font(),comment,trend_records,period_label)
+        write_report(record,temporary,japanese_font(),comment,trend_records,period_label,data_dir)
         if temporary.stat().st_size==0:raise OSError('PDFが空です')

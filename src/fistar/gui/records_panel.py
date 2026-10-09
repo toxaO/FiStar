@@ -1,8 +1,9 @@
 from datetime import datetime,timedelta
-from PySide6.QtCore import Qt,QDate,Signal,QPointF
+from PySide6.QtCore import Qt,QDate,Signal,QPointF,QTimer
 from PySide6.QtGui import QPainter,QColor,QPen,QFont
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QComboBox,QCheckBox,QDateEdit,QPushButton,QTableWidget,QTableWidgetItem,QLabel,QFileDialog,QMessageBox,QHeaderView,QInputDialog,QDialog)
-from fistar.storage.repository import list_measurements,list_record_devices,delete_measurement
+from fistar.storage.repository import list_measurements,list_record_devices
+from fistar.storage.portable import database_dir,delete_records
 from .analysis_panel import AXES,METHODS
 
 class TrendPlot(QWidget):
@@ -79,9 +80,8 @@ class TrendPlot(QWidget):
 
 
 class RecordsPanel(QWidget):
-    reopen_requested=Signal(object)
     def __init__(self,connection):
-        super().__init__(); self.connection=connection; self.records=()
+        super().__init__(); self.connection=connection; self.records=();self.reference_window=None
         root=QVBoxLayout(self); filters=QHBoxLayout()
         self.device=QComboBox(); self.axis=QComboBox(); self.axis.addItem('全ての軸',None)
         for key,label in AXES.items(): self.axis.addItem(label,key)
@@ -93,12 +93,12 @@ class RecordsPanel(QWidget):
         for combo in (self.device,self.axis): combo.currentIndexChanged.connect(self.refresh)
         self.date_filter.toggled.connect(self.refresh); self.since.dateChanged.connect(self.refresh); self.until.dateChanged.connect(self.refresh)
         self.table=QTableWidget(0,8); self.table.setHorizontalHeaderLabels(['日時','画像名','装置','軸','有効帯数','広がり指標','中心偏位（レーザー中心基準）','方式'])
-        self.table.setSelectionBehavior(QTableWidget.SelectRows); self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows); self.table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers); self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setStretchLastSection(True); self.table.itemSelectionChanged.connect(self.show_detail); root.addWidget(self.table)
         self.detail=QLabel('記録を選択してください'); self.detail.setWordWrap(True); root.addWidget(self.detail)
         tools=QHBoxLayout()
-        for label,action in [('一覧をCSV出力',self.export_csv),('選択記録をPDF出力',self.export_pdf),('選択記録を再度開く',self.reopen),('選択記録を削除',self.delete)]:
+        for label,action in [('一覧をCSV出力',self.export_csv),('選択記録をPDF出力',self.export_pdf),('参考画像を表示',self.show_reference),('選択した記録を削除',self.delete)]:
             b=QPushButton(label); b.clicked.connect(action); tools.addWidget(b)
         root.addLayout(tools)
         options=QHBoxLayout(); self.metric_selector=QComboBox(); self.metric_selector.addItem('偏位','laser_distance'); self.metric_selector.addItem('最大距離','radius')
@@ -133,12 +133,14 @@ class RecordsPanel(QWidget):
             values=[datetime.fromisoformat(record.created_at).astimezone().strftime('%Y/%m/%d %H:%M'),record.image_name,record.device,record.snapshot.get('axis_definition',{}).get('name',AXES.get(record.axis,record.axis)),str(len(record.result.active_spoke_ids)),('最大交点距離 ' if centroid else '半径 ')+f'{spread:.4f} {m.unit}',f'{m.laser_distance:.4f} {m.unit}',METHODS[record.result.center_method]]
             for col,value in enumerate(values): self.table.setItem(row,col,QTableWidgetItem(value))
         self.show_detail(); self.update_trend()
+    def selected_records(self):
+        return tuple(self.records[index.row()] for index in sorted(self.table.selectionModel().selectedRows(),key=lambda i:i.row()) if index.row()<len(self.records))
     def selected(self):
-        row=self.table.currentRow()
-        return self.records[row] if 0<=row<len(self.records) else None
+        records=self.selected_records()
+        return records[0] if len(records)==1 else None
     def show_detail(self):
         r=self.selected()
-        if not r: self.detail.setText('記録を選択してください'); return
+        if not r: self.detail.setText(f'{len(self.selected_records())}件選択中' if self.selected_records() else '記録を選択してください'); return
         m=r.result.selected; c=r.snapshot.get('calibration')
         if r.result.center_method=='intersection_centroid':
             self.detail.setText(f'交点重心方式\n交点 {len(m.intersections)}個 ／ 計算不能ペア {len(m.skipped_pairs)}組\n実画像の臨床的精度は未検証'); return
@@ -150,13 +152,29 @@ class RecordsPanel(QWidget):
         self.trend.records=self.records; self.trend.unit=self.unit.currentText(); self.trend.metric_name=self.metric_selector.currentData()
         self.trend.enabled=self.device.currentData() is not None and self.axis.currentData() is not None; self.trend.update()
     def delete(self):
-        r=self.selected()
-        if r and QMessageBox.question(self,'記録の削除',f'{r.image_name} の記録を削除しますか？',QMessageBox.Yes|QMessageBox.No,QMessageBox.No)==QMessageBox.Yes:
-            try: delete_measurement(self.connection,r.id); self.refresh()
-            except Exception as e: QMessageBox.warning(self,'削除できません',str(e))
-    def reopen(self):
-        r=self.selected()
-        if r: self.reopen_requested.emit(r)
+        records=self.selected_records()
+        if not records:return
+        if QMessageBox.question(self,'記録の削除',f'選択した{len(records)}件の記録と参考JPEGを削除します。よろしいですか？',QMessageBox.Yes|QMessageBox.No,QMessageBox.No)!=QMessageBox.Yes:return
+        try:
+            errors=delete_records(self.connection,records);self.refresh()
+            if errors:QMessageBox.warning(self,'参考画像の削除',f'記録は削除しました。一部のJPEGを削除できませんでした：{errors[0]}')
+        except Exception as error:QMessageBox.warning(self,'削除できません',str(error))
+    def show_reference(self):
+        record=self.selected()
+        if not record:QMessageBox.information(self,'参考画像','記録を1件選択してください');return
+        from fistar.pdf_report import image_session
+        from .image_view import ImageView
+        from .center_detail import CenterDetail
+        session,error=image_session(record,database_dir(self.connection))
+        if session is None:QMessageBox.warning(self,'参考画像',error);return
+        source=ImageView();source.set_session(session)
+        if self.reference_window:self.reference_window.close();self.reference_window.deleteLater()
+        self.reference_window=CenterDetail(self);self.reference_window.setWindowTitle('過去記録の参考画像（閲覧専用）')
+        viewer=self.reference_window;viewer.sync(source)
+        full=QPushButton('画像全体');viewer.layout().itemAt(0).layout().insertWidget(1,full)
+        def show_full():
+            viewer.manual_navigation();viewer.view.reset_view();viewer.fit_status.setText('参考JPEGを全体表示しています。点・線の編集と再解析はできません。')
+        full.clicked.connect(show_full);viewer.manual_navigation();viewer.show();QTimer.singleShot(0,show_full);source.deleteLater()
     def export_csv(self):
         path,_=QFileDialog.getSaveFileName(self,'一覧をCSV保存','fistar.csv','CSV (*.csv)')
         if path:
@@ -166,7 +184,7 @@ class RecordsPanel(QWidget):
             except Exception as e: QMessageBox.warning(self,'出力できません',str(e))
     def export_pdf(self):
         r=self.selected()
-        if not r:return
+        if not r:QMessageBox.information(self,'PDF出力','記録を1件選択してください');return
         dialog=QInputDialog(self);dialog.setWindowTitle('PDFレポート');dialog.setLabelText('コメント（任意・500文字まで／記録には保存しません）');dialog.setOption(QInputDialog.UsePlainTextEditForTextInput,True);dialog.resize(500,250)
         if dialog.exec()!=QDialog.Accepted:return
         comment=dialog.textValue()
@@ -182,5 +200,5 @@ class RecordsPanel(QWidget):
                 period=self.since.date().toString('yyyy/MM/dd')+'–'+self.until.date().toString('yyyy/MM/dd')
             candidates=list_measurements(self.connection,device=r.device,axis=r.axis,since=since,until=until)
             from fistar.pdf_report import select_trend_records
-            export_pdf(r,path,comment,select_trend_records(r,candidates),period_label=period)
+            export_pdf(r,path,comment,select_trend_records(r,candidates),period_label=period,data_dir=database_dir(self.connection))
         except Exception as error:QMessageBox.warning(self,'出力できません',str(error))

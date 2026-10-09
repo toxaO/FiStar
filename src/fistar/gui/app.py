@@ -1,5 +1,6 @@
 import sys
 import math
+from sqlite3 import Error as SQLiteError
 from pathlib import Path
 from PySide6.QtCore import Qt,QObject,Signal,QRunnable,QThreadPool,QStandardPaths,QSize,QSettings,QTimer
 from PySide6.QtWidgets import (QApplication,QToolButton,QGroupBox,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QSplitter,QScrollArea,QTabWidget,QPushButton,QLabel,QFileDialog,QMessageBox,QDialog,QFormLayout,QComboBox,QLineEdit,QDialogButtonBox,QDoubleSpinBox,QFrame,QSizePolicy,QStackedWidget,QListWidget)
@@ -7,6 +8,8 @@ from PySide6.QtGui import QIcon
 from fistar.core.imaging import load_tiff,analysis_channel,manual_calibration
 from fistar.workflow.session import AnalysisSession
 from fistar.core.detection import detect_spokes
+from fistar.core.backend import prepare_backend
+from fistar.storage.portable import portable_data_dir,save_with_reference,import_legacy
 from .axis_settings import AxisSettings
 from .theme import STYLE
 from .image_view import ImageView
@@ -30,13 +33,26 @@ class DetectionWorker(QRunnable):
         except Exception as e: result=None; error=str(e)
         self.signals.finished.emit(self.revision,self.image_hash,result,error)
 
+class PreparationSignals(QObject):
+    finished=Signal(object,str)
+
+class PreparationWorker(QRunnable):
+    def __init__(self,cache_path):
+        super().__init__();self.cache_path=cache_path;self.signals=PreparationSignals()
+    def run(self):
+        try:info=prepare_backend(self.cache_path);error=''
+        except Exception as exc:info=None;error=str(exc)
+        self.signals.finished.emit(info,error)
+
 class MainWindow(QMainWindow):
-    def __init__(self,database_path: Path | None=None):
+    def __init__(self,database_path: Path | None=None,cache_path: Path | None=None):
         super().__init__(); self.setStyleSheet(STYLE);self.setWindowTitle('FiStar — スターショットQA');self.setWindowIcon(QIcon(str(Path(__file__).parent/'assets/fistar.ico'))); self.resize(1000,740)
         self.session=AnalysisSession(); self.pool=QThreadPool(self); self._workers={}; self._discard_worker={}
         self._closing=False; self.detail_window=None;self._calibration_pick_active=False
         self._ruler_calibrating=False;self._ruler_original=None;self._ruler_pair=None;self._ruler_hash=None
-        self.database_path=Path(database_path) if database_path else Path(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation))/'fistar-v1.sqlite'
+        self.database_path=Path(database_path) if database_path else portable_data_dir()/'fistar-v1.sqlite'
+        self.cache_path=Path(cache_path) if cache_path else (self.database_path.parent/'cache' if database_path else Path(QStandardPaths.writableLocation(QStandardPaths.CacheLocation)))
+        self.backend_state='idle';self.backend_info=None;self._prepare_worker=None;self._pending_detection=None
         self.connection=connect_database(self.database_path)
         self.preferences=QSettings(str(self.database_path.parent/'fistar-preferences.ini'),QSettings.IniFormat)
         remembered=self.preferences.value('last_axis','gantry')
@@ -115,7 +131,8 @@ class MainWindow(QMainWindow):
         self.axis_settings=AxisSettings(self.connection);self.axis_settings.changed.connect(self.axes_changed);settings_row.addWidget(self.axis_settings);settings_row.addStretch();settings_layout.addLayout(settings_row);settings_layout.addStretch()
         self.refresh_device_names()
         self.tabs.addTab(settings_page,'設定')
-        self.records.reopen_requested.connect(self.reopen_record)
+        self.backend_retry=QPushButton('解析準備を再試行');self.backend_retry.clicked.connect(self.start_backend_preparation);self.backend_retry.hide();self.statusBar().addPermanentWidget(self.backend_retry)
+        import_button=QPushButton('旧記録を取り込む');import_button.clicked.connect(self.import_old_records);settings_layout.insertWidget(settings_layout.count()-1,import_button,0,Qt.AlignLeft)
         self.statusBar().showMessage(f'記録の保存先：{self.database_path}')
         self.panel.identity_requested.connect(self.change_identity)
         self.panel.calibration_requested.connect(self.change_calibration)
@@ -137,6 +154,29 @@ class MainWindow(QMainWindow):
         self.tool_message.setFixedHeight(line_height+4)
         self.image_info.setFixedHeight(self.image_info.fontMetrics().lineSpacing()*2+4)
         self.refresh()
+    def showEvent(self,event):
+        super().showEvent(event)
+        if self.backend_state=='idle':QTimer.singleShot(0,self.start_backend_preparation)
+    def start_backend_preparation(self):
+        if self._closing or self.backend_state in ('preparing','ready'):return
+        self.backend_state='preparing';self.backend_retry.hide()
+        self.statusBar().showMessage('解析機能を準備しています…')
+        self._prepare_worker=PreparationWorker(self.cache_path)
+        self._prepare_worker.signals.finished.connect(self.backend_prepared)
+        self.pool.start(self._prepare_worker)
+    def backend_prepared(self,info,error):
+        self._prepare_worker=None
+        if self._closing:return
+        if error:
+            self.backend_state='failed';self._pending_detection=None;self.backend_retry.show()
+            self.statusBar().showMessage('解析準備に失敗しました：'+error);self.refresh();return
+        self.backend_state='ready';self.backend_info=info;pending=self._pending_detection;self._pending_detection=None
+        self.refresh()
+        if pending:
+            revision,inputs,settings=pending
+            if revision==self.session.revision and inputs==self.session.detection_inputs:self._launch_detection(settings);return
+            self.statusBar().showMessage('準備中に条件が変わりました。照射帯を再度検出してください。')
+        else:self.statusBar().showMessage('解析機能の準備ができました。' if info.persistent else '解析機能の準備ができました（一時キャッシュを使用）。')
     def perform(self,action):
         try: action()
         except Exception as e: self.show_error(str(e))
@@ -175,7 +215,7 @@ class MainWindow(QMainWindow):
         self.view.set_session(self.session); self.panel.refresh()
         self.panel.calibration_label.hide()
         if self._ruler_calibrating:self.panel.warnings.setText('解像度の校正中')
-        self.panel.detect_button.setEnabled(self.session.can_detect and not self._workers)
+        self.panel.detect_button.setEnabled(self.session.can_detect and not self._workers and self._pending_detection is None)
         image=self.session.image
         if image:
             h,w=image.raw.shape[:2]
@@ -317,6 +357,13 @@ class MainWindow(QMainWindow):
             self.show_error(s.readiness_message or '検出処理中です');return
         if not self.confirm_edits_discard(): return
         s.set_detection_settings(settings)
+        if self.backend_state!='ready':
+            self._pending_detection=(s.revision,s.detection_inputs,settings)
+            self.start_backend_preparation();self.refresh()
+            self.statusBar().showMessage('解析機能を準備しています。完了後に検出します…');return
+        self._launch_detection(settings)
+    def _launch_detection(self,settings):
+        s=self.session
         worker=DetectionWorker(s.revision,s.image.sha256,analysis_channel(s.image),s.laser,settings)
         token=s.revision; self._workers[token]=worker; self._discard_worker[token]=True
         worker.signals.finished.connect(self.detection_finished)
@@ -348,34 +395,33 @@ class MainWindow(QMainWindow):
             self.panel._identity()
             self.session.confirm_step('result')
             record=self.session.measurement()
-            save_measurement(self.connection,record)
+            record=save_with_reference(self.connection,record,self.session.image)
         except Exception as e:
             self.show_error(str(e)); return False
         self.session.dirty=False; self.refresh(); self.records.refresh()
         self.statusBar().showMessage(f'保存しました：{record.image_name} ／ {self.database_path}')
         return True
-    def reopen_record(self,record):
+    def import_old_records(self):
+        source,_=QFileDialog.getOpenFileName(self,'取り込む旧データベースを選択','','SQLite (*.sqlite *.sqlite3)')
+        if not source:return
+        if QMessageBox.question(self,'旧記録の取り込み','旧DBを変更せず、現在のdataへ記録と参考JPEGを取り込みます。続けますか？',QMessageBox.Yes|QMessageBox.No,QMessageBox.No)!=QMessageBox.Yes:return
         try:
-            image=load_tiff(Path(record.snapshot['image_path']))
-            if image.sha256!=record.snapshot['image_sha256']: raise ValueError('元画像の内容が保存時と異なります')
-            session=AnalysisSession(); session.restore(image,record)
-        except Exception as e: self.show_error(str(e)); return
-        if not self.allow_discard(): return
-        # Keep the monotonic revision so a pending worker cannot overwrite the restored record.
-        session.revision=self.session.revision+1
-        self.cancel_ruler_calibration();self._ruler_pair=None;self.view.ruler_points=()
-        self.session=session; self.panel.session=session
-        self.panel.pixel_length.blockSignals(True);self.panel.pixel_length.setText(f'{session.calibration.sx_mm:.12g}' if session.calibration else '');self.panel.pixel_length.blockSignals(False)
-        self.set_mode(None); self.refresh(); self.tabs.setCurrentIndex(0)
+            added,missing=import_legacy(self.connection,source);self.records.refresh()
+            QMessageBox.information(self,'取り込み完了',f'{added}件取り込みました。参考画像なし：{missing}件。元DBは変更していません。')
+        except Exception as error:self.show_error(str(error))
     def closeEvent(self,event):
         if self.allow_discard():
             if self.detail_window: self.detail_window.close()
-            self._closing=True; self.pool.waitForDone(); self.connection.close(); event.accept()
+            if self.records.reference_window:self.records.reference_window.close()
+            self._closing=True;self._pending_detection=None; self.pool.waitForDone(); self.connection.close(); event.accept()
         else: event.ignore()
 
 def main():
     app=QApplication.instance() or QApplication(sys.argv)
     app.setWindowIcon(QIcon(str(Path(__file__).parent/'assets/fistar.ico')))
     app.setApplicationName('FiStar'); app.setOrganizationName('FiStar')
-    window=MainWindow(); window.show()
+    try:window=MainWindow()
+    except (OSError,SQLiteError) as error:
+        QMessageBox.critical(None,'保存先を開けません',f'dataフォルダを開けません。書込み可能なフォルダへアプリ一式を移動してください。\n{error}');return 1
+    window.show()
     return app.exec()

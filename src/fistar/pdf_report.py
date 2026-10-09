@@ -30,12 +30,17 @@ def intersection_rows(record):
     return rows,tuple(pair(ids) for ids in metric.skipped_pairs)
 
 
-def image_session(record):
+def image_session(record,data_dir=None):
     data=record.snapshot
     try:
-        if not data.get('image_path'):raise ValueError('元画像の保存パスがありません')
-        image=load_tiff(data['image_path'])
-        if image.sha256!=data.get('image_sha256'):raise ValueError('元画像が保存時の画像と一致しません')
+        if data.get('reference_image'):
+            if data_dir is None:raise ValueError('参考画像のデータフォルダが指定されていません')
+            from fistar.storage.portable import load_reference
+            image=load_reference(record,data_dir)
+        else:
+            if not data.get('image_path'):raise ValueError('参考画像がありません')
+            image=load_tiff(data['image_path'])
+            if image.sha256!=data.get('image_sha256'):raise ValueError('元画像が保存時の画像と一致しません')
     except Exception as error:return None,'元画像を表示できません：'+str(error)
     calibration=data.get('calibration');c=Calibration(calibration['sx_mm'],calibration['sy_mm'],calibration['source']) if calibration else None
     spokes=tuple(Spoke(s['id'],Line(**s['line']),tuple(Point(**p) for p in s.get('support',())),s.get('origin','auto'),s.get('excluded',False)) for s in data.get('spokes',()))
@@ -77,13 +82,13 @@ def render_trend(record,records,metric,height=250):
     return image
 
 
-def write_report(record,path,font,comment,trend_records,period_label):
+def write_report(record,path,font,comment,trend_records,period_label,data_dir=None):
     from fistar.gui.analysis_panel import AXES,METHODS
     r=record;m=r.result.selected
     if m is None:raise ValueError('選択方式の保存結果がありません')
     if len(comment)>500:raise ValueError('コメントは500文字以内で入力してください')
     records=select_trend_records(r,trend_records);rows,skipped=intersection_rows(r)
-    session,image_error=image_session(r)
+    session,image_error=image_session(r,data_dir)
     full=detail=None;scale=None
     if session:full,_=render_image(session);detail,scale=render_image(session,True)
     centroid=r.result.center_method=='intersection_centroid';spread=m.max_distance if centroid else m.circle.radius

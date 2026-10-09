@@ -27,7 +27,7 @@ def completed_workflow(qapp,tmp_path):
     QTest.mouseClick(w.panel.save_button,Qt.LeftButton)
     restored=list_measurements(w.connection); assert len(restored)==1
     record=restored[0]; csv_path=tmp_path/'summary.csv'; pdf_path=tmp_path/'summary.pdf'
-    export_csv(restored,csv_path); export_pdf(record,pdf_path)
+    export_csv(restored,csv_path); export_pdf(record,pdf_path,data_dir=tmp_path)
     w.session.dirty=False; w.close()
     return record,restored,csv_path,pdf_path,p
 
@@ -41,9 +41,10 @@ def test_saved_workflow(completed_workflow):
 def test_restore_and_stale_worker(qapp,tmp_path,completed_workflow):
     record,_,_,_,p=completed_workflow
     w=MainWindow(database_path=tmp_path/'other.sqlite')
-    w.reopen_record(record)
-    assert w.session.result==record.result
-    assert not w.session.can_save
+    assert not hasattr(w,'reopen_record')
+    from fistar.pdf_report import image_session
+    reference,error=image_session(record,p.parent)
+    assert reference is not None and not error and reference.result==record.result
     revision=w.session.revision
     w.session.set_image(load_tiff(p)); new_revision=w.session.revision
     w.detection_finished(revision,record.snapshot['image_sha256'],DetectionResult((),DetectionSettings()),'')
@@ -64,10 +65,11 @@ def test_sample_load_edit_save_export(qapp,tmp_path,name,method):
     s.set_center_method(method)
     for step in s.steps[4:]: s.confirm_step(step)
     w.refresh(); assert w.save()
-    record=list_measurements(w.connection)[0]; export_csv((record,),tmp_path/'sample.csv'); export_pdf(record,tmp_path/'sample.pdf')
-    w.reopen_record(record)
-    s=w.session
-    assert s.result==record.result
+    record=list_measurements(w.connection)[0]; export_csv((record,),tmp_path/'sample.csv'); export_pdf(record,tmp_path/'sample.pdf',data_dir=tmp_path)
+    from fistar.pdf_report import image_session
+    reference,error=image_session(record,tmp_path)
+    assert reference is not None and not error and reference.result==record.result
+    assert record.snapshot['image_path'] is None
     assert s.detection.points==d.points and s.detection.pylinac_version=='3.48.0'
     assert s.spokes[0].origin=='manual'
     assert s.center_method==method

@@ -65,7 +65,7 @@ def test_roundtrip_and_centroid_outputs(qapp,tmp_path):
     with (tmp_path/'summary.csv').open() as f: row=next(csv.DictReader(f))
     assert row['中心推定方式']=='交点重心方式'
     assert row['半径']=='' and row['交点までの最大距離']!=''
-    assert row['偏位評価']=='判定なし'
+    assert '偏位評価' not in row
     c.close()
 
 
@@ -73,12 +73,13 @@ def test_centroid_ui(qapp,tmp_path):
     from tests.test_session import ready
     from fistar.gui.app import MainWindow
     w=MainWindow(database_path=tmp_path/'gui.sqlite'); s=ready.__wrapped__(); w.session=s; w.panel.session=s
-    w.refresh(); w.panel.center_method.setCurrentIndex(1)
+    s.set_center_method('minimax');s.confirm_step('result')
+    w.refresh();w.panel.center_method.setCurrentIndex(w.panel.center_method.findData('intersection_centroid'))
     assert s.center_method=='intersection_centroid' and not s.can_save
     assert not hasattr(w.panel,'intersection_table')
     w.open_center_detail()
     assert w.detail_window.table.rowCount()==3
-    assert '判定なし' in w.panel.result_label.text()
+    assert '中心偏位' in w.panel.result_label.text()
     s.dirty=False; w.close()
 
 

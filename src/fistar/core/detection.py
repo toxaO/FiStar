@@ -2,10 +2,6 @@
 import math
 from uuid import uuid4
 import numpy as np
-from pylinac import __version__ as PYLINAC_VERSION
-from pylinac.core.geometry import Point as PylinacPoint
-from pylinac.core.image import ArrayImage
-from pylinac.starshot import StarProfile
 from .models import DetectionSettings, DetectionResult, Point, Spoke
 from .geometry import fit_line
 
@@ -17,6 +13,11 @@ def search_radius(shape: tuple[int, ...], hub: Point, settings: DetectionSetting
 
 
 def detect_spokes(values: np.ndarray, hub: Point, settings: DetectionSettings) -> DetectionResult:
+    # Load the analysis backend in the detection worker, not during GUI startup.
+    from pylinac import __version__ as PYLINAC_VERSION
+    from pylinac.core.geometry import Point as PylinacPoint
+    from pylinac.core.image import ArrayImage
+    from pylinac.starshot import StarProfile
     image = np.array(values, dtype=np.float64, copy=True)
     if image.ndim != 2 or image.size == 0 or not np.isfinite(image).all():
         raise ValueError('検出には有限値の2次元画像が必要です')
