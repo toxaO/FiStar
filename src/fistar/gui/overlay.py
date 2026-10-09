@@ -17,7 +17,7 @@ class OverlayControls(QWidget):
             for column in range(columns):layout.setColumnStretch(column,1)
         labels=({'image':'画像',**LABELS} if 'image' in view.visibility else LABELS)
         for i,(key,label) in enumerate(labels.items()):
-            check=QCheckBox(label);check.setSizePolicy(QSizePolicy.Expanding if balanced else QSizePolicy.Maximum,QSizePolicy.Fixed); check.setChecked(view.visibility[key]); self.checks[key]=check
+            check=QCheckBox(label);check.setSizePolicy(QSizePolicy.Expanding if balanced else QSizePolicy.Maximum,QSizePolicy.Fixed); check.setChecked(view.visibility[key]);check.setToolTip(label+'の表示を切り替えます。解析値は変わりません。'); self.checks[key]=check
             check.toggled.connect(lambda checked,k=key:view.set_visibility(k,checked))
             layout.addWidget(check,i//columns,i%columns)
 

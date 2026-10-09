@@ -11,11 +11,11 @@ class AxisSettings(QGroupBox):
         editor=QVBoxLayout();editor.setSpacing(8);layout.addLayout(editor)
         form=QFormLayout();self.fields={}
         for key,label in [('name','軸名'),('top','上'),('bottom','下'),('left','左'),('right','右')]:
-            field=QLineEdit();self.fields[key]=field;form.addRow(label,field)
+            field=QLineEdit();field.setToolTip('軸の表示名を入力します。' if key=='name' else f'画像の{label}側に表示する方向ラベルです。');self.fields[key]=field;form.addRow(label,field)
         form.setHorizontalSpacing(12);form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow);form.setVerticalSpacing(6);editor.addLayout(form);editor.addStretch()
         buttons=QVBoxLayout();buttons.setSpacing(8);layout.addLayout(buttons)
         for text,callback in [('新規',self.new),('追加・変更を保存',self.save),('削除',self.delete)]:
-            button=QPushButton(text);button.clicked.connect(callback);buttons.addWidget(button)
+            button=QPushButton(text);button.setToolTip({'新規':'新しい軸の入力欄を準備します。','追加・変更を保存':'軸名と方向ラベルを登録・更新します。','削除':'選択した軸を削除します。過去記録は残ります。'}[text]);button.clicked.connect(callback);buttons.addWidget(button)
         buttons.addStretch()
         self.items.currentItemChanged.connect(self.select);self.reload()
     def reload(self):

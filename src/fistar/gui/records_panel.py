@@ -99,7 +99,7 @@ class RecordsPanel(QWidget):
         self.detail=QLabel('記録を選択してください'); self.detail.setWordWrap(True); root.addWidget(self.detail)
         tools=QHBoxLayout()
         for label,action in [('一覧をCSV出力',self.export_csv),('選択記録をPDF出力',self.export_pdf),('参考画像を表示',self.show_reference),('選択した記録を削除',self.delete)]:
-            b=QPushButton(label); b.clicked.connect(action); tools.addWidget(b)
+            b=QPushButton(label);b.setToolTip({'一覧をCSV出力':'現在の絞り込みに該当する記録をCSVへ出力します。','選択記録をPDF出力':'1件選択し、画像・数値・トレンドのPDFを作成します。','参考画像を表示':'保存したJPEGと解析結果を閲覧します。','選択した記録を削除':'選択した記録と参考JPEGを確認後に削除します。'}[label]); b.clicked.connect(action); tools.addWidget(b)
         root.addLayout(tools)
         options=QHBoxLayout(); self.metric_selector=QComboBox(); self.metric_selector.addItem('偏位','laser_distance'); self.metric_selector.addItem('最大距離','radius')
         self.method=QComboBox()
@@ -110,6 +110,12 @@ class RecordsPanel(QWidget):
         self.trend=TrendPlot(); root.addWidget(self.trend)
         self.method.currentIndexChanged.connect(self.update_trend)
         self.metric_selector.currentIndexChanged.connect(self.update_trend); self.unit.currentIndexChanged.connect(self.update_trend)
+        for field,description in [
+            (self.device,'装置名で過去記録を絞り込みます。'),(self.axis,'回転軸で過去記録を絞り込みます。'),
+            (self.date_filter,'開始日と終了日で記録を絞り込みます。'),(self.since,'表示する記録の開始日です。'),(self.until,'表示する記録の終了日です。'),
+            (self.table,'Ctrl／Commandで複数選択、Shiftで範囲選択します。画像とPDFは1件を選択してください。'),
+            (self.method,'トレンドに表示する中心推定方式を選択します。'),(self.metric_selector,'偏位または最大距離／最大半径を表示します。'),
+            (self.unit,'トレンドの単位を選択します。異なる単位の記録は混在しません。')]:field.setToolTip(description)
         self.refresh()
     def refresh(self,*args):
         from fistar.storage.repository import list_axes
@@ -171,9 +177,11 @@ class RecordsPanel(QWidget):
         if self.reference_window:self.reference_window.close();self.reference_window.deleteLater()
         self.reference_window=CenterDetail(self);self.reference_window.setWindowTitle('過去記録の参考画像（閲覧専用）')
         viewer=self.reference_window;viewer.sync(source)
-        full=QPushButton('画像全体');viewer.layout().itemAt(0).layout().insertWidget(1,full)
+        full=QPushButton('画像全体');full.setToolTip('参考JPEGの全体を表示します。');viewer.layout().itemAt(0).layout().insertWidget(1,full)
         def show_full():
             viewer.manual_navigation();viewer.view.reset_view();viewer.fit_status.setText('参考JPEGを全体表示しています。点・線の編集と再解析はできません。')
+        from .hover_help import bind_tooltips
+        viewer.hover_helpers.extend(bind_tooltips(viewer))
         full.clicked.connect(show_full);viewer.manual_navigation();viewer.show();QTimer.singleShot(0,show_full);source.deleteLater()
     def export_csv(self):
         path,_=QFileDialog.getSaveFileName(self,'一覧をCSV保存','fistar.csv','CSV (*.csv)')

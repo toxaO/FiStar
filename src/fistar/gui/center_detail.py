@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt,QRectF,QSize,QPointF,QTimer
 from PySide6.QtGui import QIcon,QPainter,QColor
 from PySide6.QtWidgets import QDialog,QWidget,QVBoxLayout,QHBoxLayout,QToolButton,QLabel,QTableWidget,QTableWidgetItem,QHeaderView,QSplitter,QScrollArea
 from .image_view import ImageView
+from .hover_help import bind_tooltips
 from .overlay import DETAIL_DEFAULTS,OverlayControls,auto_fit_detail
 
 class ScaleBar(QWidget):
@@ -64,6 +65,7 @@ class CenterDetail(QDialog):
         self.view.viewport_resized.connect(self.schedule_fit)
         self.view.navigation_started.connect(self.manual_navigation)
         self.set_mode('pan')
+        self.hover_helpers=bind_tooltips(self)
     def set_mode(self,mode):
         self.view.set_mode(mode)
         for name,button in self.buttons.items(): button.setChecked(name==mode)

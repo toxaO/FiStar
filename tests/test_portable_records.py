@@ -93,3 +93,13 @@ def test_reference_view_is_read_only(qapp,tmp_path):
     assert panel.reference_window.view.session.result==record.result
     assert not hasattr(panel,'reopen_requested')
     panel.reference_window.close();panel.close();c.close()
+
+
+def test_delete_with_missing_reference_record_remaining(qapp,tmp_path):
+    s=ready.__wrapped__();c=connect_database(tmp_path/'data/fistar-v1.sqlite')
+    photo=save_with_reference(c,s.measurement(),s.image)
+    missing=replace(s.measurement(),id='missing-reference',snapshot={**s.snapshot(),'image_path':None,'reference_image':None})
+    save_measurement(c,missing)
+    assert delete_records(c,[photo])==[]
+    assert [record.id for record in list_measurements(c)]==['missing-reference']
+    assert not reference_path(photo,tmp_path/'data').exists();c.close()

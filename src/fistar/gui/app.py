@@ -12,12 +12,13 @@ from fistar.core.backend import prepare_backend
 from fistar.storage.portable import portable_data_dir,save_with_reference,import_legacy
 from .axis_settings import AxisSettings
 from .theme import STYLE
+from .hover_help import bind_tooltips
 from .image_view import ImageView
 from .overlay import OverlayControls
 from .center_detail import CenterDetail,SquareImagePanel
 from .analysis_panel import AnalysisPanel,AXES
 from .records_panel import RecordsPanel
-from fistar.storage.repository import connect_database,save_measurement,list_devices,add_device,remove_device,list_axes
+from fistar.storage.repository import connect_database,save_measurement,list_devices,add_device,remove_device,list_axes,list_measurements
 from fistar.core.models import Limits,Calibration,Point
 
 class WorkerSignals(QObject):
@@ -55,6 +56,7 @@ class MainWindow(QMainWindow):
         self.backend_state='idle';self.backend_info=None;self._prepare_worker=None;self._pending_detection=None
         self.connection=connect_database(self.database_path)
         self.preferences=QSettings(str(self.database_path.parent/'fistar-preferences.ini'),QSettings.IniFormat)
+        self.seed_resolution_preferences()
         remembered=self.preferences.value('last_axis','gantry')
         axes=list_axes(self.connection);self.session.axis=remembered if remembered in [a['id'] for a in axes] else axes[0]['id']
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
@@ -68,7 +70,7 @@ class MainWindow(QMainWindow):
         self.image_info=QLabel('TIFF画像を指定して開いてください');self.image_info.setWordWrap(True);self.image_info.setProperty('muted',True)
         icon_dir=Path(__file__).parent/'assets/icons/tools'
         self.pan_tool_button=QToolButton();self.reset_tool_button=QToolButton();self.ruler_tool_button=QToolButton()
-        for button,name,text in ((self.pan_tool_button,'tools_hand.png','画像表示調節：ドラッグで移動、スクロールで拡大縮小'),(self.reset_tool_button,'tools_reset.png','画像全体を表示'),(self.ruler_tool_button,'tools_ruler.png','定規：2点で長さを測定。校正ボタンで既知長さから解像度を計算')):
+        for button,name,text in ((self.pan_tool_button,'tools_hand.png','画像表示調節：ドラッグで移動／スクロールで拡大縮小\nダブルクリックで倍率リセット'),(self.reset_tool_button,'tools_reset.png','画像全体を表示'),(self.ruler_tool_button,'tools_ruler.png','定規：2点で長さを測定。校正ボタンで既知長さから解像度を計算')):
             button.setProperty('imageTool',True);button.setIcon(QIcon(str(icon_dir/name)));button.setIconSize(QSize(24,24));button.setFixedSize(32,32);button.setToolTip(text);button.setAccessibleName(text);button.setAutoRaise(True)
         self.pan_tool_button.setCheckable(True);self.pan_tool_button.setChecked(True);self.pan_tool_button.clicked.connect(lambda:self.set_mode('pan'))
         self.reset_tool_button.clicked.connect(lambda:self.view.reset_view());self.ruler_tool_button.setCheckable(True);self.ruler_tool_button.clicked.connect(lambda:self.set_mode('ruler'))
@@ -107,7 +109,7 @@ class MainWindow(QMainWindow):
             policy=retained.sizePolicy();policy.setRetainSizeWhenHidden(True);retained.setSizePolicy(policy)
         self.ruler_known_frame.hide();self.ruler_bar.hide();tools_row.insertWidget(3,self.ruler_bar)
         self.panel.calibration_label.hide()
-        self.operation_help=QLabel('ドラッグで移動、スクロールで拡大縮小');self.operation_help.setWordWrap(True);self.operation_help.setProperty('muted',True)
+        self.operation_help=QLabel('ドラッグで移動／スクロールで拡大縮小\nダブルクリックで倍率リセット');self.operation_help.setWordWrap(True);self.operation_help.setProperty('muted',True)
         self.operation_help.setAlignment(Qt.AlignTop|Qt.AlignLeft)
         self.tool_message=QStackedWidget();self.tool_message.addWidget(self.operation_help);self.tool_message.addWidget(self.ruler_result);tools_layout.addWidget(self.tool_message)
         image_layout.addWidget(self.tools_frame);image_layout.addWidget(self.image_info);self.image_info.setAlignment(Qt.AlignTop|Qt.AlignLeft);splitter.addWidget(image_panel)
@@ -151,8 +153,20 @@ class MainWindow(QMainWindow):
         self.view.view_changed.connect(self.update_ruler_result)
         for message in (self.operation_help,self.ruler_result,self.image_info):message.ensurePolished()
         line_height=max(self.operation_help.fontMetrics().lineSpacing(),self.ruler_result.fontMetrics().lineSpacing())
-        self.tool_message.setFixedHeight(line_height+4)
+        self.tool_message.setFixedHeight(line_height*2+4)
         self.image_info.setFixedHeight(self.image_info.fontMetrics().lineSpacing()*2+4)
+        for field,description in [
+            (self.path_edit,'解析するTIFFのパスを指定します。Enterでも開けます。'),
+            (browse,'TIFFを選ぶと、そのまま読み込みます。'),(self.open_button,'入力したパスの画像を開きます。'),
+            (self.pan_tool_button,'ドラッグで移動、スクロールで拡大縮小、ダブルクリックで倍率リセット。'),
+            (self.ruler_calibrate,'既知の長さを入力し、画像上の2点からmm/pxを求めます。'),
+            (self.ruler_known,'校正に使う既知の長さをmmで入力します。'),(self.ruler_cancel,'校正を中止して元の解像度へ戻します。'),
+            (self.display_toggle,'画像に重ねる点・線・番号などの表示を切り替えます。'),
+            (self.device_name_entry,'解析の候補に追加する装置名を入力します。'),
+            (device_add,'入力した装置名を候補リストに追加します。'),(device_delete,'選んだ装置名を候補から削除します。過去記録は残ります。'),
+            (self.backend_retry,'解析機能の準備をやり直します。'),
+            (import_button,'旧DBを変更せず、過去記録と参考JPEGをdataへ取り込みます。')]:field.setToolTip(description)
+        self.hover_helpers=bind_tooltips(self)
         self.refresh()
     def showEvent(self,event):
         super().showEvent(event)
@@ -199,14 +213,14 @@ class MainWindow(QMainWindow):
             self._calibration_pick_active=False
             if self.session.calibration_mode=='manual' and self.session.calibration is not None and self.session.calibration_error:
                 self.session.set_calibration(self.session.calibration,'manual');self.refresh()
-        self.panel.laser_button.blockSignals(True);self.panel.laser_button.setChecked(mode=='laser');self.panel.laser_button.blockSignals(False)
+        self.panel.laser_button.blockSignals(True);self.panel.laser_button.setChecked(mode=='laser');self.panel.laser_button.setText('基準点選択中' if mode=='laser' else '基準点選択');self.panel.laser_button.blockSignals(False)
         self.view.set_mode(mode)
         self.pan_tool_button.blockSignals(True);self.pan_tool_button.setChecked(mode=='pan');self.pan_tool_button.blockSignals(False)
         self.ruler_tool_button.blockSignals(True);self.ruler_tool_button.setChecked(mode=='ruler');self.ruler_tool_button.blockSignals(False)
         self.ruler_bar.setVisible(mode=='ruler')
         self.tool_message.setCurrentWidget(self.ruler_result if mode=='ruler' else self.operation_help)
         if mode=='ruler':self.update_ruler_result();return
-        self.operation_help.setText('校正用の2点を画像上で左クリックしてください' if mode=='calibration' else ('画像上を左クリックで基準点指定（操作後に解除）' if mode=='laser' else 'ドラッグで移動、スクロールで拡大縮小'))
+        self.operation_help.setText('校正用の2点を画像上で左クリックしてください' if mode=='calibration' else ('左クリックで基準点指定（操作後に解除）\nShift＋ドラッグで画像移動' if mode=='laser' else 'ドラッグで移動／スクロールで拡大縮小\nダブルクリックで倍率リセット'))
     def refresh(self):
         self.panel.set_axes(list_axes(self.connection))
         axis=next((a for a in list_axes(self.connection) if a['id']==self.session.axis),None)
@@ -285,7 +299,10 @@ class MainWindow(QMainWindow):
         self.preferences.setValue('last_image_path',str(image.path.resolve()));self.preferences.sync()
         axis=self.preferences.value('last_axis','gantry')
         axes=list_axes(self.connection);self.session.axis=axis if axis in [a['id'] for a in axes] else axes[0]['id']
-        self.panel.pixel_length.blockSignals(True);self.panel.pixel_length.clear();self.panel.pixel_length.blockSignals(False)
+        self.panel.pixel_length.blockSignals(True);self.panel.pixel_length.setText(str(self.preferences.value('last_pixel_length','')));self.panel.pixel_length.blockSignals(False)
+        method=self.preferences.value('last_calibration_method','none')
+        if method not in ('none','tag','numeric'):method='none'
+        self.change_calibration(method)
         self.set_mode('pan');self.refresh()
     def open_image(self):self.browse_image_path()
     def confirm_edits_discard(self):
@@ -311,9 +328,30 @@ class MainWindow(QMainWindow):
                     a,b,_=c.reference;self.session.set_calibration(manual_calibration(a,b,self.panel.known_length.value()),'manual')
                 else:self.session.set_calibration(None,'manual','既知長さを入力し「画像上の2点を指定」で校正してください')
         self.perform(apply)
+        self.remember_resolution()
         if action!='manual':self.set_mode('pan')
+    def seed_resolution_preferences(self):
+        if self.preferences.contains('last_calibration_method'):return
+        records=list_measurements(self.connection)
+        if not records:return
+        snapshot=records[0].snapshot;calibration=snapshot.get('calibration')
+        mode=snapshot.get('calibration_mode') or ('tag' if calibration and calibration.get('source')=='TIFF' else 'numeric' if calibration else 'none')
+        if mode=='manual':mode='numeric'
+        if mode not in ('none','tag','numeric'):mode='none'
+        self.preferences.setValue('last_calibration_method',mode)
+        if mode=='numeric' and calibration:self.preferences.setValue('last_pixel_length',format(calibration['sx_mm'],'.12g'))
+        self.preferences.sync()
+    def remember_resolution(self):
+        s=self.session
+        if s.calibration_error or not s.image:return
+        method='numeric' if s.calibration_mode=='manual' else s.calibration_mode
+        if method not in ('none','tag','numeric'):return
+        self.preferences.setValue('last_calibration_method',method)
+        if method=='numeric' and s.calibration:self.preferences.setValue('last_pixel_length',format(s.calibration.sx_mm,'.12g'))
+        self.preferences.sync()
     def finish_manual_calibration(self,a,b):
         self.perform(lambda:self.session.set_calibration(manual_calibration(a,b,self.panel.known_length.value()),'manual'))
+        self.remember_resolution()
         if not self.session.calibration_error:self.set_mode('pan')
     def begin_ruler_calibration(self):
         if not self.session.image:return
@@ -338,7 +376,7 @@ class MainWindow(QMainWindow):
             except ValueError:
                 self.ruler_result.setText('正の既知長さをmmで入力し、2点を指定し直してください');return
             self._ruler_calibrating=False;self._ruler_original=None;self.ruler_known_frame.hide()
-            self.session.set_calibration(c,'manual');self._ruler_pair=(a,b);self.refresh()
+            self.session.set_calibration(c,'manual');self._ruler_pair=(a,b);self.remember_resolution();self.refresh()
             self.ruler_result.setText(f'校正：{c.sx_mm:.8g} mm/px ／ 測定 {length:.6g} mm ({distance:.6g} px)')
         else:self._ruler_pair=(a,b);self.update_ruler_result()
     def update_ruler_result(self):
@@ -395,6 +433,7 @@ class MainWindow(QMainWindow):
             self.panel._identity()
             self.session.confirm_step('result')
             record=self.session.measurement()
+            self.remember_resolution()
             record=save_with_reference(self.connection,record,self.session.image)
         except Exception as e:
             self.show_error(str(e)); return False

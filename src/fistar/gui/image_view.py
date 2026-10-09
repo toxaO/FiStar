@@ -233,6 +233,10 @@ class ImageView(QGraphicsView):
         if not self.session or not self.session.image:
             return super().mousePressEvent(event)
         if event.button()!=Qt.LeftButton:return super().mousePressEvent(event)
+        if self.mode=='laser' and event.modifiers() & Qt.ShiftModifier and not self.read_only:
+            self._laser_start=None;self._laser_preview=None
+            self.navigation_started.emit();self._navigation_drag='pan';self._navigation_position=event.position()
+            self.setCursor(Qt.ClosedHandCursor);event.accept();return
         if self.mode=='laser' and not self.read_only:
             point=self._point(event)
             if self._image_item.boundingRect().contains(QPointF(point.x,point.y)):

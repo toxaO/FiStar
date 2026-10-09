@@ -78,7 +78,7 @@ def delete_records(connection,records):
     root=database_dir(connection)
     with connection:
         connection.executemany('DELETE FROM measurements_v1 WHERE id=?',[(r.id,) for r in records])
-    kept={r.snapshot.get('reference_image',{}).get('path') for r in list_measurements(connection)}
+    kept={(r.snapshot.get('reference_image') or {}).get('path') for r in list_measurements(connection)}
     errors=[]
     for record in records:
         reference=record.snapshot.get('reference_image')

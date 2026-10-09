@@ -1,4 +1,5 @@
 from dataclasses import replace
+from html import escape
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QGroupBox,QLabel,QPushButton,QComboBox,QLineEdit,QFormLayout,QDoubleSpinBox,QListWidget,QListWidgetItem,QTableWidget,QTableWidgetItem,QHeaderView)
 from fistar.core.models import DetectionSettings
@@ -6,6 +7,13 @@ from .hover_help import HoverHelp
 
 AXES={'gantry':'ガントリ','collimator':'コリメータ','couch':'カウチ'}
 METHODS={'intersection_centroid':'交点重心方式','minimax':'最小円方式'}
+
+def result_table(rows):
+    cells=[]
+    for label,value in rows:
+        label=escape(str(label));value=escape(str(value)).replace('\n','<br>')
+        cells.append(f'<tr><td width="42%" bgcolor="#e5edf2"><b>{label}</b></td><td width="58%" bgcolor="#ffffff">{value}</td></tr>')
+    return '<table width="100%" border="1" cellspacing="0" cellpadding="5" style="border-color:#d7e2e8;">'+''.join(cells)+'</table>'
 
 class AnalysisPanel(QWidget):
     identity_requested=Signal(str,str)
@@ -43,24 +51,15 @@ class AnalysisPanel(QWidget):
         self.pixel_length.textEdited.connect(lambda:self.calibration_requested.emit('numeric'))
         laser_layout=group('2  レーザー基準点','laser')
         self.laser_step=QLabel('未指定（基準点選択ボタンで指定）');self.laser_step.setWordWrap(True);laser_layout.addWidget(self.laser_step)
-        self.laser_button=QPushButton('基準点選択');self.laser_button.setCheckable(True);self.laser_button.toggled.connect(lambda checked:self.mode_requested.emit('laser' if checked else 'pan'));laser_layout.addWidget(self.laser_button)
+        self.laser_button=QPushButton('基準点選択');self.laser_button.setCheckable(True);self.laser_button.setProperty('laserSelection',True);self.laser_button.toggled.connect(lambda checked:self.mode_requested.emit('laser' if checked else 'pan'));laser_layout.addWidget(self.laser_button)
         root.removeWidget(self.stage_boxes['calibration']);root.addWidget(self.stage_boxes['calibration'])
         layout=group('4  照射帯の検出','spokes')
         detection_row=QHBoxLayout();detection_row.setSpacing(8);detection_left=QWidget();left_layout=QVBoxLayout(detection_left);left_layout.setContentsMargins(0,0,0,0);left_layout.setSpacing(8)
         form=QFormLayout();form.setRowWrapPolicy(QFormLayout.WrapLongRows);self.radius=QDoubleSpinBox();self.peak_height=QDoubleSpinBox()
         self.radius.setRange(5,95);self.radius.setDecimals(1);self.radius.setSuffix(' %');self.radius.setValue(85)
         self.peak_height.setRange(.1,99.9);self.peak_height.setDecimals(1);self.peak_height.setSuffix(' %');self.peak_height.setValue(25)
-        radius_tip=('探索円の半径\n\n'
-            'レーザー基準点を中心に、照射帯を探す円の大きさを指定します。\n\n'
-            '基準点から最も近い画像端までの距離を100%とします。たとえば、その距離が100pxなら、85%で半径85pxになります。\n\n'
-            '値を変えると画像上の探索円が更新されます。円が各照射帯を横切る位置になるよう調整し、再検出してください。')
-        peak_tip=('最小ピーク高さ\n\n'
-            '円周上の濃淡を一周読み取り、暗い照射帯を「山（ピーク）」として検出します。この設定は、小さい山を候補から外すための下限です。\n\n'
-            '円周データの最低値を0とし、最も高い山を100%とします。25%なら、その山の高さの1/4以上の山が候補になります。例：最も高い山が100なら、高さ30の山は候補、高さ20の山は対象外です。\n\n'
-            '・低くする：薄い帯も拾いやすくなりますが、ノイズも拾いやすくなります。\n'
-            '・高くする：ノイズを減らしやすくなりますが、薄い帯を見落とすことがあります。\n\n'
-            '帯が足りなければ少し下げ、余分な帯があれば少し上げて再検出してください。\n\n'
-            'これはピークを採用する条件です。帯の中心を求める「半値幅の50%」や照射線量の割合とは別の値です。ピーク間の間隔など、ほかの検出条件も適用されます。')
+        radius_tip='レーザー点から最も近い画像端までを100%とする探索円の半径です。円が帯を横切る位置に調整してください。'
+        peak_tip='円周の最大ピークに対する採用下限（初期25%）です。低くすると薄い帯とノイズを拾いやすく、高くすると弱い帯を見落としやすくなります。'
         self.detection_help=[]
         for label,field,tip in [('探索円の半径',self.radius,radius_tip),('最小ピーク高さ',self.peak_height,peak_tip)]:
             text=QLabel(label);form.addRow(text,field)
@@ -76,9 +75,19 @@ class AnalysisPanel(QWidget):
         for value,label in METHODS.items():self.center_method.addItem(label,value)
         self.center_method.currentIndexChanged.connect(lambda:self.center_method_requested.emit(self.center_method.currentData()));layout.addWidget(self.center_method)
         self.detail_button=QPushButton('中心付近を拡大');self.detail_button.clicked.connect(self.detail_requested.emit);layout.addWidget(self.detail_button)
-        self.summary=QLabel();self.summary.setWordWrap(True);layout.addWidget(self.summary)
-        self.result_label=QLabel();self.result_label.setWordWrap(True);layout.addWidget(self.result_label)
+        self.summary=QLabel();self.summary.setTextFormat(Qt.RichText);self.summary.setTextInteractionFlags(Qt.TextSelectableByMouse);self.summary.setWordWrap(True);layout.addWidget(self.summary)
+        self.result_label=QLabel();self.result_label.setTextFormat(Qt.RichText);self.result_label.setTextInteractionFlags(Qt.TextSelectableByMouse);self.result_label.setWordWrap(True);layout.addWidget(self.result_label)
         self.save_button=QPushButton('結果を確認して保存');self.save_button.setProperty('primary',True);self.save_button.clicked.connect(self.save_requested.emit);root.addWidget(self.save_button);root.addStretch()
+        for field,description in [
+            (self.device,'装置名を手入力するか候補から選択します。空欄でも保存できます。'),
+            (self.axis,'解析する回転軸を選択します。前回の選択を引き継ぎます。'),
+            (self.calibration_method,'前回の解像度設定を引き継ぎます。TIFFタグは今回の画像から読み込みます。'),
+            (self.laser_button,'左クリックで基準点を指定します。選択中はShift＋ドラッグで画像を移動できます。'),
+            (self.detect_button,'現在の基準点と条件で照射帯を検出します。'),
+            (self.spoke_list,'チェックを外すと帯を解析から除外します。'),
+            (self.center_method,'同じ中心線を使い、交点重心方式または最小円方式で中心を求めます。'),
+            (self.detail_button,'中心・レーザー点・交点を拡大して確認します。'),
+            (self.save_button,'確認した結果と参考JPEGをdataへ保存します。')]:field.setToolTip(description)
     def _identity(self):self.identity_requested.emit(self.device.currentText(),self.axis.currentData())
     def settings(self):return DetectionSettings(self.radius.value()/100,self.peak_height.value()/100,'dark')
     def _settings_changed(self):self.detection_settings_requested.emit(self.settings())
@@ -127,19 +136,32 @@ class AnalysisPanel(QWidget):
         self.detail_button.setEnabled(s.result is not None and s.result.selected is not None and not s.requires_redetection)
         calibration=f'X {c.sx_mm:.6g}, Y {c.sy_mm:.6g} mm/px ({c.source})' if c else '未校正（px）'
         laser=f'({s.laser.x:.3f}, {s.laser.y:.3f}) px' if s.laser else '未指定'
-        self.summary.setText(f'{s.image.path.name if s.image else "画像未選択"}\n装置：{s.device or "（空欄）"} ／ {self.axis.currentText()}\n校正：{calibration}\nレーザー：{laser}\n'+s.readiness_message)
+        self.summary.setText(result_table([
+            ('画像名',s.image.path.name if s.image else '画像未選択'),
+            ('装置名',s.device or '未入力'),('回転軸',self.axis.currentText()),
+            ('解像度',calibration),('レーザー基準点',laser)]))
         centroid=s.center_method=='intersection_centroid'
-        if centroid:
-            m=s.result.selected if s.result else None
-            if m:
+        m=s.result.selected if s.result else None
+        if m:
+            center=m.center if centroid else m.circle.center
+            rows=[('解析方式',METHODS[s.center_method]),
+                  ('使用帯数',f'{len(s.result.active_spoke_ids)}本'),
+                  ('中心偏位（レーザー中心基準）',f'{m.laser_distance:.4f} {m.unit}'),
+                  ('偏位X',f'{m.laser_delta.x:+.4f} {m.unit}'),('偏位Y',f'{m.laser_delta.y:+.4f} {m.unit}'),
+                  ('最大距離' if centroid else '最大半径',f'{m.max_distance if centroid else m.circle.radius:.4f} {m.unit}'),
+                  ('推定中心',f'X {center.x:.4f} / Y {center.y:.4f} {m.unit}')]
+            if centroid:
                 numbers={spoke.id:str(i+1) for i,spoke in enumerate(s.spokes)}
-                skipped='、'.join('–'.join(numbers[id] for id in pair) for pair in m.skipped_pairs) or 'なし'
-                warning_text='\n'.join(m.warnings)
-                for id,number in numbers.items(): warning_text=warning_text.replace('帯ID '+id,'帯 '+number).replace(' / '+id+'：',' / '+number+'：')
-                self.result_label.setText(f'交点重心方式\n中心：({m.center.x:.4f}, {m.center.y:.4f}) {m.unit}\n中心偏位（レーザー中心基準）：{m.laser_distance:.4f} {m.unit}\n成分：X {m.laser_delta.x:+.4f}, Y {m.laser_delta.y:+.4f} {m.unit}\n使用交点：{len(m.intersections)}個\n計算不能ペア：{len(m.skipped_pairs)}組（{skipped}）\n交点までの最大距離：{m.max_distance:.4f} {m.unit}\n偏位：Xは右、Yは上が正\n画像：水色＝レーザー、赤＝重心、白＝交点\n'+warning_text)
-            else: self.result_label.setText((s.result.centroid_error if s.result else s.error) or '中心線の確認後に計算します')
-        elif s.result:
-            m=s.result.primary
-            self.result_label.setText(f'解析日時：{s.analysis_at}\n有効な帯：{len(s.result.active_spoke_ids)}本\n半径：{m.circle.radius:.4f} {m.unit}\n中心偏位（レーザー中心基準）：{m.laser_distance:.4f} {m.unit}\n成分：X {m.laser_delta.x:+.4f}, Y {m.laser_delta.y:+.4f} {m.unit}\n中心：({m.circle.center.x:.4f}, {m.circle.center.y:.4f}) {m.unit}\n偏位：Xは右、Yは上が正')
-        else: self.result_label.setText(s.error or '照射帯の検出後に結果を表示します')
+                skipped='、'.join('–'.join(numbers.get(key,key) for key in pair) for pair in m.skipped_pairs) or 'なし'
+                rows.extend([('使用交点',f'{len(m.intersections)}個'),('計算不能ペア',f'{len(m.skipped_pairs)}組（{skipped}）')])
+                warning='\n'.join(m.warnings)
+                for key,number in numbers.items():warning=warning.replace(key,number)
+                if warning:rows.append(('警告',warning))
+            text=result_table(rows)
+            text+='<p>偏位：Xは右、Yは上が正。<br>中心座標：Xは右、Yは下向き。<br>画像：水色＝レーザー、赤＝重心、紫＝最小円中心、白＝交点</p>'
+            if s.readiness_message:text+='<p>'+escape(s.readiness_message)+'</p>'
+            self.result_label.setText(text)
+        else:
+            reason=(s.result.centroid_error if centroid and s.result else s.error) or '照射帯の検出後に結果を表示します'
+            self.result_label.setText(escape(reason))
         self.result_label.setEnabled(s.ready_for_review)

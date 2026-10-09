@@ -28,6 +28,8 @@ QComboBox::down-arrow { image: url("@DOWN_ARROW@"); width: 12px; height: 8px; }
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { border: 0; width: 18px; }
 QPushButton { background: #eef4f7; border: 1px solid #cbd8e0; border-radius: 5px;
               padding: 7px 10px; min-height: 20px; }
+QPushButton[laserSelection="true"] { border-width: 2px; }
+QPushButton[laserSelection="true"]:checked { background: #087f8c; color: #ffffff; border: 2px solid #055e68; font-weight: 600; }
 QPushButton:hover { background: #e3eef3; border-color: #91b9c5; }
 QPushButton[primary="true"] { background: #087f8c; border-color: #087f8c; color: #ffffff; font-weight: 600; }
 QPushButton[primary="true"]:hover { background: #066c78; }
