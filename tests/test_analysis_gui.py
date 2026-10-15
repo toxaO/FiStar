@@ -70,6 +70,7 @@ def test_save_failure_keeps_confirmed_work(qapp,tmp_path):
     # Use the real session setup through its underlying fixture function.
     session=ready.__wrapped__()
     w=MainWindow(database_path=tmp_path/'db.sqlite'); w.session=session; w.panel.session=session
+    w.refresh()
     w.connection.close(); errors=[]; w.show_error=errors.append
     assert not w.save()
     assert w.session.dirty and w.session.can_save and errors
@@ -99,11 +100,17 @@ def test_async_detection_finishes_in_current_session(qapp,tmp_path):
     s.set_image(LoadedImage(tmp_path/'one.tif',synthetic_starshot((0,25,50,90,120,150)),'hash',None))
     s.set_identity('装置','gantry'); s.set_laser(Point(256,256))
     for step in s.steps[:4]: s.confirm_step(step)
-    w.refresh(); w.detect(DetectionSettings(.8,.25))
-    end=time.monotonic()+5
-    while w._workers and time.monotonic()<end:
+    w.refresh();w.show();qapp.processEvents();w.select_stage("laser")
+    w.analysis_scroll.verticalScrollBar().setValue(20);scroll=w.analysis_scroll.verticalScrollBar().value()
+    w.detect(DetectionSettings(.8,.25))
+    end=time.monotonic()+60
+    while (w._prepare_worker is not None or w._pending_detection is not None or w._workers) and time.monotonic()<end:
         qapp.processEvents(); QTest.qWait(10)
-    assert not w._workers and len(s.spokes)==6 and not s.can_save
+    assert w.backend_state=="ready", f"backend={w.backend_state}: {w.statusBar().currentMessage()}"
+    assert w._prepare_worker is None and w._pending_detection is None and not w._workers, "準備または検出が60秒以内に完了しませんでした"
+    assert len(s.spokes)==6 and s.can_save
+    assert w.panel.save_button.isEnabled()
+    assert w.panel.current_stage=="laser" and w.analysis_scroll.verticalScrollBar().value()==scroll
     s.dirty=False; w.close()
 
 def test_failed_detection_preserves_manual_lines(qapp,tmp_path):
@@ -114,5 +121,24 @@ def test_failed_detection_preserves_manual_lines(qapp,tmp_path):
     w.detection_finished(s.revision,s.image.sha256,None,'検出点が奇数です')
     assert tuple(s.spokes)==before and s.detection==detection
     assert errors==['検出点が奇数です']
+    assert s.requires_redetection and not s.can_save
+    assert not w.panel.save_button.isEnabled()
+    assert w.panel.stage_boxes['result'].property('stepState')=='stale'
     assert '検出できません' in w.statusBar().currentMessage()
     s.dirty=False; w.close()
+
+
+def test_reanalysis_blocks_save_until_success_without_moving_stage(qapp,tmp_path,monkeypatch):
+    from tests.test_session import ready
+    s=ready.__wrapped__();w=MainWindow(database_path=tmp_path/"pending.sqlite")
+    w.session=s;w.panel.session=s;w.refresh();w.backend_state="ready"
+    started=[];monkeypatch.setattr(w.pool,"start",started.append)
+    monkeypatch.setattr(w,"confirm_edits_discard",lambda:True)
+    w.select_stage("calibration");previous_result=s.result
+    w.detect(s.detection_settings)
+    assert started and s.result is previous_result and not s.can_save
+    assert not w.panel.save_button.isEnabled() and w.panel.stage_boxes["result"].property("stepState")=="stale"
+    w.detection_finished(s.revision,s.image.sha256,s.detection,"")
+    assert s.can_save and w.panel.save_button.isEnabled()
+    assert w.panel.stage_boxes["result"].property("stepState")=="complete" and w.panel.current_stage=="calibration"
+    s.dirty=False;w.close()

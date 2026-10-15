@@ -1,6 +1,6 @@
 """Delayed, compact help that stays visible while hovering."""
 from PySide6.QtCore import QObject,QEvent,Qt,QPoint,QTimer
-from PySide6.QtWidgets import QFrame,QLabel,QVBoxLayout,QWidget
+from PySide6.QtWidgets import QFrame,QLabel,QVBoxLayout,QWidget,QLineEdit,QComboBox,QAbstractSpinBox,QAbstractItemView
 
 class HoverHelp(QObject):
     def __init__(self,targets,text,parent,delay_ms=1000):
@@ -14,6 +14,8 @@ class HoverHelp(QObject):
         layout=QVBoxLayout(self.popup);layout.setContentsMargins(10,8,10,8)
         label=QLabel(text);label.setWordWrap(True);label.setFixedWidth(280);layout.addWidget(label)
         for target in targets:target.setToolTip('');target.installEventFilter(self)
+    def show_for(self,target):
+        self.timer.stop();self.target=target;self.show_popup()
     def show_popup(self):
         target=self.target
         if target is None or not target.isVisible():return
@@ -32,4 +34,9 @@ class HoverHelp(QObject):
 
 def bind_tooltips(parent):
     """Convert existing tooltips to the same delayed, persistent help style."""
-    return [HoverHelp((widget,),widget.toolTip(),parent) for widget in parent.findChildren(QWidget) if widget.toolTip()]
+    helpers=[]
+    for widget in parent.findChildren(QWidget):
+        if isinstance(widget,(QLineEdit,QComboBox,QAbstractSpinBox,QAbstractItemView)):
+            widget.setToolTip('');continue
+        if widget.toolTip():helpers.append(HoverHelp((widget,),widget.toolTip(),parent))
+    return helpers

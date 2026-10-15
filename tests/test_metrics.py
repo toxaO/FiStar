@@ -8,7 +8,7 @@ def test_anisotropic_and_laser():
     result = evaluate_spokes(spokes+(Spoke('excluded',Line(1,0,100),excluded=True),),Point(0,0),Calibration(2,1,'test'))
     r = 4/(3+sqrt(5))
     assert result.physical.circle.radius == pytest.approx(r,abs=1e-6)
-    assert result.physical.laser_delta == Point(result.physical.circle.center.x,result.physical.circle.center.y)
+    assert result.physical.laser_delta == Point(result.physical.circle.center.x,-result.physical.circle.center.y)
     assert result.physical.laser_distance == pytest.approx(sqrt(2)*r,abs=1e-6)
     assert len(result.active_spoke_ids) == 3
 

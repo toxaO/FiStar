@@ -16,7 +16,17 @@ def test_old_table_kept_and_precision(tmp_path,measurement):
     c=connect_database(p)
     save_measurement(c,measurement)
     assert c.execute('SELECT marker FROM analyses').fetchone()[0]=='keep'
-    assert list_measurements(c)==(measurement,)
+    restored=list_measurements(c)[0]
+    assert restored.result.pixels.circle==measurement.result.pixels.circle
+    assert restored.result.pixels.laser_delta==Point(1,-2)
+    assert restored.result.pixels.laser_distance==measurement.result.pixels.laser_distance
+    assert restored.snapshot==dict(measurement.snapshot,laser_delta_y_positive="up")
+    assert restored==replace(measurement,result=replace(measurement.result,pixels=replace(measurement.result.pixels,laser_delta=Point(1,-2))),snapshot=restored.snapshot)
+    assert "laser_delta_y_positive" not in measurement.snapshot
+    import json
+    stored=json.loads(c.execute("SELECT payload FROM measurements_v1").fetchone()[0])
+    assert stored["result"]["pixels"]["laser_delta"]["y"]==2
+    assert "laser_delta_y_positive" not in stored["snapshot"]
     set_limits(c,'装置A','gantry',Limits('px',2,3))
     assert get_limits(c,'装置A','gantry')==Limits('px',2,3)
     assert list_measurements(c)[0].limits==Limits('mm')

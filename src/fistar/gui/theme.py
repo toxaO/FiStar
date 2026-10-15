@@ -15,6 +15,16 @@ QGroupBox#analysisFrame QGroupBox { padding: 7px 7px 5px; margin-top: 9px; }
 QGroupBox#resolutionSettings { padding: 6px 4px 4px; margin-top: 10px; }
 QGroupBox#analysisFrame { padding: 5px 2px 2px; margin-top: 10px; }
 QGroupBox#imageFile { padding: 5px 6px 4px; margin-top: 10px; }
+QGroupBox#analysisFrame QGroupBox[stageCard="true"] { border: 2px solid #dce5eb; border-radius: 7px;
+    padding: 8px 6px 6px; margin-top: 12px; font-size: 15px; font-weight: 600; }
+QGroupBox#analysisFrame QGroupBox[stageCard="true"]::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
+QGroupBox#analysisFrame QGroupBox[stageCard="true"][stepState="complete"] { background: #edf8f2; }
+QGroupBox#analysisFrame QGroupBox[stageCard="true"][stepState="incomplete"] { background: #fff8ed; }
+QGroupBox#analysisFrame QGroupBox[stageCard="true"][stepState="stale"] { background: #fff0dc; }
+QGroupBox#analysisFrame QGroupBox[stageCard="true"][currentStage="true"] { border-color: #087f8c; }
+QLabel[stageHeading="true"] { font-weight: 600; }
+QToolButton[helpButton="true"], QToolButton[helpButton="true"]:hover,
+QToolButton[helpButton="true"]:pressed { background: transparent; border-color: transparent; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
 QLineEdit, QComboBox, QDoubleSpinBox { background: #ffffff; border: 1px solid #cbd8e0;
                                      border-radius: 4px; min-height: 24px; padding: 3px 6px; }
@@ -47,6 +57,7 @@ QCheckBox { spacing: 5px; }
 QLabel[muted="true"] { color: #516978; font-size: 12px; }
 QLabel:disabled { color: #85949e; }
 QFrame[displayOptions="true"] { background: #ffffff; border: 1px solid #dce5eb; border-radius: 5px; }
+QStatusBar::item { border: 0; }
 QStatusBar { background: #eaf0f4; color: #647b89; }
 QToolTip { background: #253b49; color: #ffffff; border: 0; padding: 5px; }
 """.replace("@DOWN_ARROW@", (Path(__file__).parent/"assets/icons/chevron_down.svg").as_posix())

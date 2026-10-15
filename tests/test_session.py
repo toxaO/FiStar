@@ -19,7 +19,8 @@ def ready():
 
 def test_save_gated_and_snapshot(ready):
     assert ready.can_save
-    assert ready.snapshot()['schema_version']==4
+    assert ready.snapshot()['schema_version']==5
+    assert ready.snapshot()['laser_delta_y_positive']=='up'
     ready.set_laser(Point(3,3))
     assert not ready.can_save
     assert len(ready.spokes)==3
@@ -29,7 +30,7 @@ def test_save_gated_and_snapshot(ready):
 def test_edit_invalidates_and_keeps_original(ready):
     old=ready.spokes[0]
     ready.replace_spoke(replace(old,line=Line(1,0,3),origin='manual'))
-    assert not ready.can_save
+    assert ready.can_save
     assert ready.snapshot()['detected_spokes'][0]['line']['offset']==2
     assert ready.snapshot()['spokes'][0]['line']['offset']==3
     with pytest.raises(ValueError): ready.set_channel('R')
@@ -81,4 +82,4 @@ def test_snapshot_pylinac_metadata_roundtrip():
     assert record.snapshot['detection_metadata']['pylinac_version']=='3.48.0'
     restored=AnalysisSession(); restored.restore(image,record)
     assert restored.detection==detection
-    assert restored.result==record.result and not restored.can_save
+    assert restored.result==record.result and restored.can_save and not restored.dirty

@@ -71,6 +71,9 @@ class AnalysisSession:
         if isinstance(detection.settings,DetectionSettings): self.detection_settings=detection.settings
         self.spokes=detection.spokes; self._detection_inputs=self.detection_inputs
         self._change('spokes')
+    def invalidate_detection(self):
+        self._detection_inputs=None;self.revision+=1;self.dirty=self.image is not None
+        self.confirmed_steps.discard('result')
     def apply_detection(self,revision,image_hash,detection,discard_edits=False):
         if revision!=self.revision or not self.image or image_hash!=self.image.sha256: return False
         self.set_detection(detection,discard_edits); return True
@@ -97,7 +100,7 @@ class AnalysisSession:
         index=self.steps.index(step)
         if step=='result' and not self.ready_for_review: raise ValueError(self.readiness_message)
         if step=='image' and self.image is None: raise ValueError('画像を選択してください')
-        if step=='result' and self.channel!='luminance': raise ValueError('旧記録の解析チャンネルを保持しています。輝度で再検出してから結果を確認してください')
+        if step=='result' and self.channel!='luminance': raise ValueError('旧記録の解析チャンネルを保持しています。輝度で再検出してください')
         if step=='laser' and self.laser is None: raise ValueError('レーザー点を指定してください')
         if step in ('spokes','result') and (self.result is None or (step=='result' and self.result.selected is None)): raise ValueError(self.error or (self.result.centroid_error if self.result else '') or '有効な中心線が必要です')
         self.confirmed_steps.add(step); self.dirty=True
@@ -126,7 +129,7 @@ class AnalysisSession:
         return not self.readiness_message
     @property
     def can_save(self):
-        return self.ready_for_review and 'result' in self.confirmed_steps
+        return self.ready_for_review
     def snapshot(self):
         metadata=None
         if self.detection:
@@ -146,7 +149,7 @@ class AnalysisSession:
                 'detected_spokes':[asdict(s) for s in self.detection.spokes] if self.detection else [],
                 'spokes':[asdict(s) for s in self.spokes], 'confirmed_steps':sorted(self.confirmed_steps)}
     def measurement(self,limits=None):
-        if not self.can_save: raise ValueError(self.readiness_message or '結果の確認後に保存できます')
+        if not self.can_save: raise ValueError(self.readiness_message or '解析結果の処理が完了してから保存できます')
         return Measurement(str(uuid4()),self.analysis_at,self.device,self.axis,
                            self.image.path.name,self.result,Limits(),Judgment('not_evaluated','not_evaluated'),self.snapshot())
     def restore(self,image,record):

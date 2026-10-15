@@ -8,7 +8,9 @@ from fistar.core.models import LoadedImage,Point
 def test_new_defaults_and_removed_choices(qapp,tmp_path):
     w=MainWindow(database_path=tmp_path/'db.sqlite')
     w.session.set_image(LoadedImage(tmp_path/'one.tif',np.zeros((100,100,3),np.uint16),'one',None));w.refresh()
-    assert w.panel.device.text()=='temp'
+    assert w.panel.device.isEditable() and w.panel.device.currentText()==''
+    w.panel.device.setEditText('装置A')
+    assert w.session.device=='装置A'
     assert w.session.channel=='luminance' and not hasattr(w.panel,'channel')
     assert w.session.center_method=='intersection_centroid'
     assert not hasattr(w,'zoom_tool_button')
@@ -16,11 +18,12 @@ def test_new_defaults_and_removed_choices(qapp,tmp_path):
     w.session.dirty=False;w.close()
 
 
-def test_laser_does_not_need_a_confirmation_frame(qapp,tmp_path):
+def test_laser_selection_does_not_need_intermediate_confirmation(qapp,tmp_path):
     w=MainWindow(database_path=tmp_path/'db.sqlite');s=w.session
     s.set_image(LoadedImage(tmp_path/'one.tif',np.zeros((100,100),np.uint16),'one',None))
     s.set_laser(Point(50,50));w.refresh()
-    assert 'laser' not in w.panel.stage_boxes and w.panel.detect_button.isEnabled()
+    assert 'laser' in w.panel.stage_boxes and not w.panel.confirm_buttons
+    assert not s.confirmed_steps and w.panel.detect_button.isEnabled()
     assert w.view.mode=='pan'
     s.dirty=False;w.close()
 
@@ -93,16 +96,21 @@ def test_detail_double_click_resets_to_all_points(qapp,tmp_path):
     w.session.dirty=False;w.close()
 
 
-def test_laser_right_click_and_left_drag_pan(qapp,tmp_path):
+def test_laser_left_click_and_shift_drag_pan(qapp,tmp_path):
     from PySide6.QtTest import QTest
     w=MainWindow(database_path=tmp_path/'db.sqlite');s=w.session
     s.set_image(LoadedImage(tmp_path/'one.tif',np.zeros((100,100),np.uint16),'one',None))
     w.refresh();w.show();qapp.processEvents();w.view.reset_view();w.set_mode('laser');v=w.view
-    QTest.mouseClick(v.viewport(),Qt.LeftButton,pos=v.mapFromScene(QPointF(30,40)))
-    assert s.laser is None
     QTest.mouseClick(v.viewport(),Qt.RightButton,pos=v.mapFromScene(QPointF(30,40)))
-    assert abs(s.laser.x-30)<.2 and abs(s.laser.y-40)<.2
-    laser=s.laser;revision=s.revision;before=v.mapToScene(v.viewport().rect()).boundingRect().center()
+    assert s.laser is None and v.mode=='laser'
+    before=v.mapToScene(v.viewport().rect()).boundingRect().center();revision=s.revision
+    QTest.mousePress(v.viewport(),Qt.LeftButton,Qt.ShiftModifier,QPoint(200,200));QTest.mouseMove(v.viewport(),QPoint(250,220));QTest.mouseRelease(v.viewport(),Qt.LeftButton,Qt.ShiftModifier,QPoint(250,220))
+    assert v.mapToScene(v.viewport().rect()).boundingRect().center()!=before
+    assert s.laser is None and s.revision==revision and v.mode=='laser'
+    QTest.mouseClick(v.viewport(),Qt.LeftButton,pos=v.mapFromScene(QPointF(30,40)))
+    assert abs(s.laser.x-30)<.2 and abs(s.laser.y-40)<.2 and v.mode=='pan'
+    laser=s.laser;revision=s.revision
+    before=v.mapToScene(v.viewport().rect()).boundingRect().center()
     QTest.mousePress(v.viewport(),Qt.LeftButton,pos=QPoint(200,200));QTest.mouseMove(v.viewport(),QPoint(250,220));QTest.mouseRelease(v.viewport(),Qt.LeftButton,pos=QPoint(250,220))
     assert v.mapToScene(v.viewport().rect()).boundingRect().center()!=before
     assert s.laser==laser and s.revision==revision

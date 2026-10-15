@@ -1,9 +1,13 @@
 from dataclasses import replace
 from html import escape
-from PySide6.QtCore import Signal, Qt
-from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QGroupBox,QLabel,QPushButton,QComboBox,QLineEdit,QFormLayout,QDoubleSpinBox,QListWidget,QListWidgetItem,QTableWidget,QTableWidgetItem,QHeaderView)
+from pathlib import Path
+from PySide6.QtCore import Signal, Qt, QEvent, QSize
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QGroupBox,QLabel,QPushButton,QComboBox,QLineEdit,QFormLayout,QDoubleSpinBox,QListWidget,QListWidgetItem,QTableWidget,QTableWidgetItem,QHeaderView,QAbstractButton,QAbstractSpinBox,QAbstractItemView)
 from fistar.core.models import DetectionSettings
 from .hover_help import HoverHelp
+from .stage_help import stage_help_text
+from PySide6.QtWidgets import QToolButton
 
 AXES={'gantry':'ガントリ','collimator':'コリメータ','couch':'カウチ'}
 METHODS={'intersection_centroid':'交点重心方式','minimax':'最小円方式'}
@@ -16,6 +20,8 @@ def result_table(rows):
     return '<table width="100%" border="1" cellspacing="0" cellpadding="5" style="border-color:#d7e2e8;">'+''.join(cells)+'</table>'
 
 class AnalysisPanel(QWidget):
+    stage_requested=Signal(str)
+    stage_order=("identity","laser","calibration","spokes","result")
     identity_requested=Signal(str,str)
     calibration_requested=Signal(str)
     mode_requested=Signal(str)
@@ -27,10 +33,17 @@ class AnalysisPanel(QWidget):
     detail_requested=Signal()
     save_requested=Signal()
     def __init__(self,session):
-        super().__init__();self.setObjectName('analysisPanel');self.setAttribute(Qt.WA_StyledBackground,True); self.session=session;self.confirm_buttons={};self.stage_boxes={}
+        super().__init__();self.setObjectName('analysisPanel');self.setAttribute(Qt.WA_StyledBackground,True); self.session=session;self.confirm_buttons={};self.stage_boxes={};self.stage_headers={};self.stage_titles={};self.current_stage="identity"
         root=QVBoxLayout(self);root.setContentsMargins(4,0,4,4);root.setSpacing(12)
+        self.stage_help_buttons={};self.stage_help={}
         def group(title,key):
-            box=QGroupBox(title);layout=QVBoxLayout(box);layout.setContentsMargins(5,4,5,4);layout.setSpacing(5);root.addWidget(box);self.stage_boxes[key]=box;return layout
+            box=QGroupBox(title);box.setProperty('stageCard',True);box.setProperty('stageKey',key);box.installEventFilter(self);layout=QVBoxLayout(box);layout.setContentsMargins(5,4,5,4);layout.setSpacing(5);root.addWidget(box);self.stage_boxes[key]=box
+            self.stage_headers[key]=box;self.stage_titles[key]=title
+            button=QToolButton();button.setProperty('helpButton',True);button.setIcon(QIcon(str(Path(__file__).parent/'assets/icons/help.svg')));button.setIconSize(QSize(24,24));button.setFixedSize(28,28);button.setAccessibleName(title+'のヘルプ')
+            helper=HoverHelp((button,),stage_help_text(key),self)
+            button.clicked.connect(lambda checked=False,helper=helper,button=button:helper.show_for(button))
+            self.stage_help_buttons[key]=button;self.stage_help[key]=helper
+            return layout
         layout=group('1  装置と回転軸','identity')
         self.device=QComboBox();self.device.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon);self.device.setMinimumContentsLength(10);self.device.setEditable(True);self.device.setInsertPolicy(QComboBox.NoInsert);self.device.addItem('', '')
         self.axis=QComboBox()
@@ -39,16 +52,19 @@ class AnalysisPanel(QWidget):
         self.device.currentTextChanged.connect(self._identity);self.axis.currentIndexChanged.connect(self._identity)
         layout=group('3  解像度','calibration')
         self.calibration_method=QComboBox()
-        for label,value in [('未校正','none'),('TIFFタグ','tag'),('入力値','numeric')]:self.calibration_method.addItem(label,value)
+        for label,value in [('DPI入力','dpi'),('TIFFタグ','tag'),('mm/px入力','numeric'),('未校正','none')]:self.calibration_method.addItem(label,value)
         self.pixel_length=QLineEdit();self.pixel_length.setPlaceholderText('例：0.1');self.pixel_length.setToolTip('1pxあたりの長さをmmで入力します。正の有限値を指定してください。')
+        self.dpi_input=QLineEdit('72');self.dpi_input.setPlaceholderText('例：72')
+        self.resolution_unit=QLabel('DPI');self.tag_dpi_label=QLabel();self.tag_dpi_label.setWordWrap(True)
         self.numeric_frame=QWidget();numeric_layout=QHBoxLayout(self.numeric_frame);numeric_layout.setContentsMargins(0,0,0,0);numeric_layout.setSpacing(6)
-        numeric_layout.addWidget(self.pixel_length,1);numeric_layout.addWidget(QLabel('mm/px'))
+        numeric_layout.addWidget(self.pixel_length,1);numeric_layout.addWidget(self.dpi_input,1);numeric_layout.addWidget(self.resolution_unit);numeric_layout.addWidget(self.tag_dpi_label,1)
         calibration_row=QHBoxLayout();calibration_row.setSpacing(8);calibration_row.addWidget(self.calibration_method);calibration_row.addWidget(self.numeric_frame,1);layout.addLayout(calibration_row)
         self.calibration_label=QLabel();self.calibration_label.setWordWrap(True);layout.addWidget(self.calibration_label)
         # Retain the old reference-length value only for loading existing records.
         self.known_length=QDoubleSpinBox(self);self.known_length.hide();self.known_length.setRange(.001,10000);self.known_length.setValue(10)
         self.calibration_method.currentIndexChanged.connect(lambda:self.calibration_requested.emit(self.calibration_method.currentData()))
         self.pixel_length.textEdited.connect(lambda:self.calibration_requested.emit('numeric'))
+        self.dpi_input.textEdited.connect(lambda:self.calibration_requested.emit('dpi'))
         laser_layout=group('2  レーザー基準点','laser')
         self.laser_step=QLabel('未指定（基準点選択ボタンで指定）');self.laser_step.setWordWrap(True);laser_layout.addWidget(self.laser_step)
         self.laser_button=QPushButton('基準点選択');self.laser_button.setCheckable(True);self.laser_button.setProperty('laserSelection',True);self.laser_button.toggled.connect(lambda checked:self.mode_requested.emit('laser' if checked else 'pan'));laser_layout.addWidget(self.laser_button)
@@ -63,21 +79,22 @@ class AnalysisPanel(QWidget):
         self.detection_help=[]
         for label,field,tip in [('探索円の半径',self.radius,radius_tip),('最小ピーク高さ',self.peak_height,peak_tip)]:
             text=QLabel(label);form.addRow(text,field)
-            self.detection_help.append(HoverHelp((text,field),tip,self))
+            self.detection_help.append(HoverHelp((text,),tip,self))
         left_layout.addLayout(form)
         self.radius.valueChanged.connect(self._settings_changed);self.peak_height.valueChanged.connect(self._settings_changed)
         self.detect_button=QPushButton('照射帯を検出');self.detect_button.setProperty('primary',True);self.detect_button.clicked.connect(self._detect);left_layout.addWidget(self.detect_button)
         self.warnings=QLabel();self.warnings.setWordWrap(True);left_layout.addWidget(self.warnings)
         self.spoke_list=QListWidget();self.spoke_list.setMinimumWidth(85);self.spoke_list.setMaximumWidth(115);self.spoke_list.setMinimumHeight(145);self.spoke_list.setMaximumHeight(220);self.spoke_list.itemChanged.connect(self._exclude)
         self.spoke_list.currentItemChanged.connect(lambda item,old:self.selected_requested.emit(item.data(Qt.UserRole)) if item else None);detection_row.addWidget(detection_left,1);detection_row.addWidget(self.spoke_list);layout.addLayout(detection_row)
-        layout=group('5  結果の確認','result')
+        layout=group('5  結果','result')
         self.center_method=QComboBox()
         for value,label in METHODS.items():self.center_method.addItem(label,value)
         self.center_method.currentIndexChanged.connect(lambda:self.center_method_requested.emit(self.center_method.currentData()));layout.addWidget(self.center_method)
         self.detail_button=QPushButton('中心付近を拡大');self.detail_button.clicked.connect(self.detail_requested.emit);layout.addWidget(self.detail_button)
         self.summary=QLabel();self.summary.setTextFormat(Qt.RichText);self.summary.setTextInteractionFlags(Qt.TextSelectableByMouse);self.summary.setWordWrap(True);layout.addWidget(self.summary)
         self.result_label=QLabel();self.result_label.setTextFormat(Qt.RichText);self.result_label.setTextInteractionFlags(Qt.TextSelectableByMouse);self.result_label.setWordWrap(True);layout.addWidget(self.result_label)
-        self.save_button=QPushButton('結果を確認して保存');self.save_button.setProperty('primary',True);self.save_button.clicked.connect(self.save_requested.emit);root.addWidget(self.save_button);root.addStretch()
+        self.save_button=QPushButton('保存');self.save_button.setProperty('primary',True);self.save_button.setMinimumWidth(72);self.save_button.setMaximumWidth(120);self.save_button.clicked.connect(self.save_requested.emit)
+        save_row=QHBoxLayout();save_row.addStretch(1);save_row.addWidget(self.save_button);layout.addLayout(save_row);root.addStretch()
         for field,description in [
             (self.device,'装置名を手入力するか候補から選択します。空欄でも保存できます。'),
             (self.axis,'解析する回転軸を選択します。前回の選択を引き継ぎます。'),
@@ -87,7 +104,42 @@ class AnalysisPanel(QWidget):
             (self.spoke_list,'チェックを外すと帯を解析から除外します。'),
             (self.center_method,'同じ中心線を使い、交点重心方式または最小円方式で中心を求めます。'),
             (self.detail_button,'中心・レーザー点・交点を拡大して確認します。'),
-            (self.save_button,'確認した結果と参考JPEGをdataへ保存します。')]:field.setToolTip(description)
+            (self.save_button,'処理済みの解析結果と参考JPEGをdataへ保存します。')]:field.setToolTip(description)
+        for stage,box in self.stage_boxes.items():
+            layout=box.layout();first=layout.itemAt(0);button=self.stage_help_buttons[stage]
+            if isinstance(first.layout(),QHBoxLayout):
+                first.layout().addWidget(button,0,Qt.AlignTop)
+            else:
+                first=layout.takeAt(0);row=QHBoxLayout()
+                if first.widget():row.addWidget(first.widget(),1)
+                else:row.addLayout(first.layout(),1)
+                row.addWidget(button,0,Qt.AlignTop);layout.insertLayout(0,row)
+            for widget in box.findChildren(QWidget):
+                if isinstance(widget,QLabel) or type(widget) is QWidget:
+                    widget.setProperty('stageKey',stage);widget.installEventFilter(self)
+    def eventFilter(self,watched,event):
+        if event.type()==QEvent.MouseButtonPress and event.button()==Qt.LeftButton:
+            child=watched.childAt(event.position().toPoint())
+            while child is not None and child is not watched:
+                if isinstance(child,(QAbstractButton,QAbstractSpinBox,QAbstractItemView,QComboBox,QLineEdit)):return False
+                child=child.parentWidget()
+            stage=watched.property('stageKey')
+            if stage:self.stage_requested.emit(stage)
+        return super().eventFilter(watched,event)
+    def select_stage(self,stage):
+        if stage not in self.stage_order:return
+        self.current_stage=stage;self.refresh_stage_headers()
+    def refresh_stage_headers(self):
+        s=self.session
+        configured={'identity':bool(s.device),'laser':s.laser is not None,'calibration':s.calibration is not None,'spokes':bool(s.spokes),'result':s.can_save}
+        for stage,box in self.stage_boxes.items():
+            stale=stage in ('spokes','result') and s.detection is not None and s.requires_redetection
+            state='stale' if stale else ('complete' if configured[stage] else 'incomplete')
+            description='再解析が必要' if stale else ('処理済み' if configured[stage] else '未処理') if stage=='result' else ('設定済み' if configured[stage] else '未設定')
+            selected=stage==self.current_stage
+            box.setAccessibleDescription(('選択中。' if selected else '')+description)
+            box.setProperty('stepState',state);box.setProperty('currentStage',selected);box.style().unpolish(box);box.style().polish(box)
+
     def _identity(self):self.identity_requested.emit(self.device.currentText(),self.axis.currentData())
     def settings(self):return DetectionSettings(self.radius.value()/100,self.peak_height.value()/100,'dark')
     def _settings_changed(self):self.detection_settings_requested.emit(self.settings())
@@ -105,24 +157,30 @@ class AnalysisPanel(QWidget):
         self.device.setCurrentText(self.session.device);self.device.blockSignals(False)
     def refresh(self):
         s=self.session
-        self.stage_boxes['calibration'].setEnabled(s.image is not None)
-        self.stage_boxes['spokes'].setEnabled(s.image is not None)
-        fields=(self.device,self.axis,self.spoke_list,self.radius,self.peak_height,self.calibration_method,self.known_length,self.pixel_length,self.center_method)
+        for stage in ('calibration','spokes'):
+            for widget in self.stage_boxes[stage].findChildren(QWidget,options=Qt.FindDirectChildrenOnly):
+                if widget not in (self.stage_headers[stage],self.stage_help_buttons[stage]):widget.setEnabled(s.image is not None)
+        fields=(self.device,self.axis,self.spoke_list,self.radius,self.peak_height,self.calibration_method,self.known_length,self.pixel_length,self.dpi_input,self.center_method)
         for widget in fields:widget.blockSignals(True)
         self.device.setCurrentText(s.device)
         self.axis.setCurrentIndex(self.axis.findData(s.axis));self.calibration_method.setCurrentIndex(self.calibration_method.findData('numeric' if s.calibration_mode=='manual' else s.calibration_mode))
         c=s.calibration
-        self.calibration_label.setText(s.calibration_error or (f'{c.source}: X {c.sx_mm:.6g}, Y {c.sy_mm:.6g} mm/px' if c else '未校正：pxで評価します'))
+        self.calibration_label.setText(s.calibration_error or (f'{c.source}: X {25.4/c.sx_mm:.8g}, Y {25.4/c.sy_mm:.8g} DPI' if c else '未校正：pxで評価します'))
         self.numeric_frame.setVisible(True)
-        self.numeric_frame.setEnabled(s.calibration_mode in ('numeric','manual'))
+        self.numeric_frame.setEnabled(s.calibration_mode in ('dpi','numeric','manual','tag'))
+        dpi=s.calibration_mode=='dpi'
+        tag=s.calibration_mode=='tag'
+        self.dpi_input.setVisible(dpi);self.pixel_length.setVisible(not dpi and not tag);self.resolution_unit.setVisible(not tag);self.resolution_unit.setText('DPI' if dpi else 'mm/px')
+        self.tag_dpi_label.setVisible(tag);self.tag_dpi_label.setText(f'X {25.4/c.sx_mm:.8g} / Y {25.4/c.sy_mm:.8g} DPI' if c else 'DPIタグなし')
         if c and c.reference:self.known_length.setValue(c.reference[2])
+        if c and dpi and not self.dpi_input.hasFocus():self.dpi_input.setText(f'{25.4/c.sx_mm:.12g}')
         if c and not self.pixel_length.hasFocus():self.pixel_length.setText(f'{c.sx_mm:.12g}')
-        if c and s.calibration_mode in ('numeric','manual') and c.sx_mm!=c.sy_mm:
+        if c and s.calibration_mode in ('dpi','numeric','manual') and c.sx_mm!=c.sy_mm:
             self.calibration_label.setText(self.calibration_label.text()+'\n入力値の変更後はX・Yに同じ値を使用します。')
         if s.detection_settings:self.radius.setValue(s.detection_settings.radius_ratio*100);self.peak_height.setValue(s.detection_settings.min_peak_height*100)
         selected=self.spoke_list.currentItem().data(Qt.UserRole) if self.spoke_list.currentItem() else None
         self.spoke_list.setVisible(True)
-        self.stage_boxes['result'].setVisible(bool(s.spokes) or s.result is not None)
+        self.stage_boxes['result'].setVisible(True)
         self.spoke_list.clear()
         for i,spoke in enumerate(s.spokes):
             item=QListWidgetItem(f'帯 {i+1}');item.setData(Qt.UserRole,spoke.id);item.setFlags(item.flags()|Qt.ItemIsUserCheckable);item.setCheckState(Qt.Unchecked if spoke.excluded else Qt.Checked);self.spoke_list.addItem(item)
@@ -132,9 +190,9 @@ class AnalysisPanel(QWidget):
         self.laser_button.setEnabled(s.image is not None)
         self.laser_step.setText('指定済み' if s.laser else '未指定（基準点選択ボタンで指定）')
         self.warnings.setText('' if s.image and s.laser is None and not s.calibration_error else s.readiness_message)
-        self.detect_button.setEnabled(s.can_detect);self.save_button.setEnabled(s.ready_for_review and s.dirty)
+        self.detect_button.setEnabled(s.can_detect);self.save_button.setEnabled(s.can_save and s.dirty)
         self.detail_button.setEnabled(s.result is not None and s.result.selected is not None and not s.requires_redetection)
-        calibration=f'X {c.sx_mm:.6g}, Y {c.sy_mm:.6g} mm/px ({c.source})' if c else '未校正（px）'
+        calibration=f'X {25.4/c.sx_mm:.8g}, Y {25.4/c.sy_mm:.8g} DPI ({c.source})' if c else '未校正（px）'
         laser=f'({s.laser.x:.3f}, {s.laser.y:.3f}) px' if s.laser else '未指定'
         self.summary.setText(result_table([
             ('画像名',s.image.path.name if s.image else '画像未選択'),
@@ -165,3 +223,4 @@ class AnalysisPanel(QWidget):
             reason=(s.result.centroid_error if centroid and s.result else s.error) or '照射帯の検出後に結果を表示します'
             self.result_label.setText(escape(reason))
         self.result_label.setEnabled(s.ready_for_review)
+        self.refresh_stage_headers()

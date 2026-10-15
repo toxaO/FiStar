@@ -17,14 +17,15 @@ class ScaleBar(QWidget):
 
 class SquareImagePanel(QWidget):
     """Keep the image view square within the available left pane."""
-    def __init__(self,view,alignment=Qt.AlignHCenter):
-        super().__init__(); self.view=view;self.alignment=alignment; self.setMinimumSize(280,280)
+    def __init__(self,view,alignment=Qt.AlignHCenter,inset=0):
+        super().__init__(); self.view=view;self.alignment=alignment;self.inset=inset; self.setMinimumSize(280,280)
         view.setParent(self); view.show()
     def resizeEvent(self,event):
         super().resizeEvent(event)
-        side=min(self.width(),self.height())
-        x=self.width()-side if self.alignment==Qt.AlignRight else (self.width()-side)//2
-        self.view.setGeometry(x,(self.height()-side)//2,side,side)
+        available=self.rect().adjusted(self.inset,self.inset,-self.inset,-self.inset)
+        side=min(available.width(),available.height())
+        x=available.right()-side+1 if self.alignment==Qt.AlignRight else available.left()+(available.width()-side)//2
+        self.view.setGeometry(x,available.top()+(available.height()-side)//2,side,side)
         if not self.view.read_only and self.view._fit_full_image:self.view.reset_view()
 
 class CenterDetail(QDialog):

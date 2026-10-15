@@ -4,7 +4,7 @@ from sqlite3 import Error as SQLiteError
 from pathlib import Path
 from PySide6.QtCore import Qt,QObject,Signal,QRunnable,QThreadPool,QStandardPaths,QSize,QSettings,QTimer
 from PySide6.QtWidgets import (QApplication,QToolButton,QGroupBox,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QSplitter,QScrollArea,QTabWidget,QPushButton,QLabel,QFileDialog,QMessageBox,QDialog,QFormLayout,QComboBox,QLineEdit,QDialogButtonBox,QDoubleSpinBox,QFrame,QSizePolicy,QStackedWidget,QListWidget)
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon,QShortcut,QKeySequence
 from fistar.core.imaging import load_tiff,analysis_channel,manual_calibration
 from fistar.workflow.session import AnalysisSession
 from fistar.core.detection import detect_spokes
@@ -57,17 +57,18 @@ class MainWindow(QMainWindow):
         self.connection=connect_database(self.database_path)
         self.preferences=QSettings(str(self.database_path.parent/'fistar-preferences.ini'),QSettings.IniFormat)
         self.seed_resolution_preferences()
+        self.session.calibration_mode=self.preferences.value('last_calibration_method','dpi')
         remembered=self.preferences.value('last_axis','gantry')
         axes=list_axes(self.connection);self.session.axis=remembered if remembered in [a['id'] for a in axes] else axes[0]['id']
         self.tabs=QTabWidget(); self.setCentralWidget(self.tabs)
         page=QWidget(); layout=QVBoxLayout(page);layout.setContentsMargins(12,10,12,8);layout.setSpacing(8);self.view=ImageView()
         file_box=QWidget();file_layout=QVBoxLayout(file_box);file_layout.setContentsMargins(6,6,6,6);file_layout.setSpacing(0)
-        path_row=QHBoxLayout();path_row.setSpacing(10);self.path_edit=QLineEdit();self.path_edit.setMinimumWidth(220);self.path_edit.setMaximumWidth(340);self.path_edit.setPlaceholderText('TIFF画像パス');self.path_edit.returnPressed.connect(self.load_from_path)
+        path_row=QHBoxLayout();path_row.setSpacing(10);self.path_edit=QLineEdit();self.path_edit.setMinimumWidth(220);self.path_edit.setPlaceholderText('TIFF画像パス');self.path_edit.returnPressed.connect(self.load_from_path)
         browse=QPushButton('参照');browse.setMinimumWidth(72);browse.clicked.connect(self.browse_image_path)
         self.open_button=QPushButton('開く');self.open_button.setMinimumWidth(72);self.open_button.setProperty('primary',True);self.open_button.clicked.connect(self.load_from_path)
         self.path_edit.setText(str(self.preferences.value('last_image_path','')))
-        path_row.addWidget(self.path_edit,1);path_row.addWidget(browse);path_row.addWidget(self.open_button);path_row.addStretch();file_layout.addLayout(path_row)
-        self.image_info=QLabel('TIFF画像を指定して開いてください');self.image_info.setWordWrap(True);self.image_info.setProperty('muted',True)
+        path_row.addWidget(self.path_edit,1);path_row.addWidget(browse);path_row.addWidget(self.open_button);file_layout.addLayout(path_row)
+        self.image_info=QLabel('TIFF画像を指定して開いてください');self.image_info.setWordWrap(False);self.image_info.setMinimumWidth(0);self.image_info.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed);self.image_info.setProperty('muted',True)
         icon_dir=Path(__file__).parent/'assets/icons/tools'
         self.pan_tool_button=QToolButton();self.reset_tool_button=QToolButton();self.ruler_tool_button=QToolButton()
         for button,name,text in ((self.pan_tool_button,'tools_hand.png','画像表示調節：ドラッグで移動／スクロールで拡大縮小\nダブルクリックで倍率リセット'),(self.reset_tool_button,'tools_reset.png','画像全体を表示'),(self.ruler_tool_button,'tools_ruler.png','定規：2点で長さを測定。校正ボタンで既知長さから解像度を計算')):
@@ -93,7 +94,8 @@ class MainWindow(QMainWindow):
         splitter=QSplitter();splitter.setHandleWidth(3);image_panel=QWidget();image_layout=QVBoxLayout(image_panel);image_layout.setContentsMargins(0,0,0,0)
         image_layout.setSpacing(6);image_layout.addWidget(file_box)
         self.panel=AnalysisPanel(self.session)
-        self.square_image=SquareImagePanel(self.view,alignment=Qt.AlignHCenter);self.square_image.setMinimumSize(160,160);self.view.setMinimumSize(64,64);image_layout.addWidget(self.square_image,1)
+        self.panel.dpi_input.setText(str(self.preferences.value('last_dpi','72')))
+        self.square_image=SquareImagePanel(self.view,alignment=Qt.AlignHCenter,inset=8);self.square_image.setMinimumSize(160,160);self.view.setMinimumSize(64,64);image_layout.addWidget(self.square_image,1)
         self.tools_frame=QFrame();self.tools_frame.setObjectName('stableImageTools');tools_layout=QVBoxLayout(self.tools_frame);tools_layout.setContentsMargins(6,4,6,3);tools_layout.setSpacing(2)
         tools_row=QHBoxLayout();tools_row.setSpacing(4)
         for button in (self.pan_tool_button,self.reset_tool_button,self.ruler_tool_button):tools_row.addWidget(button)
@@ -112,7 +114,7 @@ class MainWindow(QMainWindow):
         self.operation_help=QLabel('ドラッグで移動／スクロールで拡大縮小\nダブルクリックで倍率リセット');self.operation_help.setWordWrap(True);self.operation_help.setProperty('muted',True)
         self.operation_help.setAlignment(Qt.AlignTop|Qt.AlignLeft)
         self.tool_message=QStackedWidget();self.tool_message.addWidget(self.operation_help);self.tool_message.addWidget(self.ruler_result);tools_layout.addWidget(self.tool_message)
-        image_layout.addWidget(self.tools_frame);image_layout.addWidget(self.image_info);self.image_info.setAlignment(Qt.AlignTop|Qt.AlignLeft);splitter.addWidget(image_panel)
+        image_layout.addWidget(self.tools_frame);self.statusBar().addPermanentWidget(self.image_info,1);self.image_info.setAlignment(Qt.AlignVCenter|Qt.AlignRight);self.statusBar().setSizeGripEnabled(False);splitter.addWidget(image_panel)
         scroll=QScrollArea(); self.analysis_scroll=scroll;scroll.setWidgetResizable(True);scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); scroll.setWidget(self.panel)
         sidebar=QWidget();sidebar.setMinimumWidth(300);sidebar.setMaximumWidth(460);sidebar_layout=QVBoxLayout(sidebar);sidebar_layout.setContentsMargins(0,0,0,0);sidebar_layout.setSpacing(6)
         self.analysis_frame=QGroupBox('解析');self.analysis_frame.setObjectName('analysisFrame');analysis_layout=QVBoxLayout(self.analysis_frame);analysis_layout.setContentsMargins(3,3,3,3);analysis_layout.setSpacing(3);analysis_layout.addWidget(scroll)
@@ -136,6 +138,11 @@ class MainWindow(QMainWindow):
         self.backend_retry=QPushButton('解析準備を再試行');self.backend_retry.clicked.connect(self.start_backend_preparation);self.backend_retry.hide();self.statusBar().addPermanentWidget(self.backend_retry)
         import_button=QPushButton('旧記録を取り込む');import_button.clicked.connect(self.import_old_records);settings_layout.insertWidget(settings_layout.count()-1,import_button,0,Qt.AlignLeft)
         self.statusBar().showMessage(f'記録の保存先：{self.database_path}')
+        self.panel.stage_requested.connect(self.select_stage)
+        self.next_stage_shortcut=QShortcut(QKeySequence('Ctrl+PgDown'),self)
+        self.previous_stage_shortcut=QShortcut(QKeySequence('Ctrl+PgUp'),self)
+        self.next_stage_shortcut.activated.connect(lambda:self.move_stage(1))
+        self.previous_stage_shortcut.activated.connect(lambda:self.move_stage(-1))
         self.panel.identity_requested.connect(self.change_identity)
         self.panel.calibration_requested.connect(self.change_calibration)
         self.panel.mode_requested.connect(self.set_mode)
@@ -154,7 +161,7 @@ class MainWindow(QMainWindow):
         for message in (self.operation_help,self.ruler_result,self.image_info):message.ensurePolished()
         line_height=max(self.operation_help.fontMetrics().lineSpacing(),self.ruler_result.fontMetrics().lineSpacing())
         self.tool_message.setFixedHeight(line_height*2+4)
-        self.image_info.setFixedHeight(self.image_info.fontMetrics().lineSpacing()*2+4)
+        self.image_info.setFixedHeight(self.image_info.fontMetrics().lineSpacing())
         for field,description in [
             (self.path_edit,'解析するTIFFのパスを指定します。Enterでも開けます。'),
             (browse,'TIFFを選ぶと、そのまま読み込みます。'),(self.open_button,'入力したパスの画像を開きます。'),
@@ -196,12 +203,12 @@ class MainWindow(QMainWindow):
         except Exception as e: self.show_error(str(e))
         self.refresh()
     def show_error(self,error): QMessageBox.warning(self,'操作を完了できません',error)
-    def confirm_stage(self,step):
-        try: self.session.confirm_step(step)
-        except Exception as error: self.show_error(str(error))
-        else:
-            if step=='laser': self.set_mode('pan')
-        self.refresh()
+    def select_stage(self,stage):
+        self.panel.select_stage(stage)
+    def move_stage(self,direction):
+        if self.tabs.currentIndex()!=0:return
+        stages=self.panel.stage_order;index=stages.index(self.panel.current_stage)
+        self.select_stage(stages[max(0,min(len(stages)-1,index+direction))])
     def set_mode(self,mode):
         mode=mode or 'pan'
         if mode!='ruler' and self._ruler_calibrating:self.cancel_ruler_calibration()
@@ -234,7 +241,7 @@ class MainWindow(QMainWindow):
         if image:
             h,w=image.raw.shape[:2]
             c=self.session.calibration
-            resolution=f'解像度 X {c.sx_mm:.8g}, Y {c.sy_mm:.8g} mm/px' if c else '未校正（px）'
+            resolution=f'解像度 X {25.4/c.sx_mm:.8g}, Y {25.4/c.sy_mm:.8g} DPI' if c else '未校正（px）'
             self.image_info.setText(f'表示中：{image.path.name} ／ {w}×{h} px ／ {image.raw.dtype.itemsize*8} bit ／ {resolution}')
             if not self.path_edit.hasFocus():self.path_edit.setText(str(image.path))
         else:self.image_info.setText('TIFF画像を指定して開いてください')
@@ -300,8 +307,14 @@ class MainWindow(QMainWindow):
         axis=self.preferences.value('last_axis','gantry')
         axes=list_axes(self.connection);self.session.axis=axis if axis in [a['id'] for a in axes] else axes[0]['id']
         self.panel.pixel_length.blockSignals(True);self.panel.pixel_length.setText(str(self.preferences.value('last_pixel_length','')));self.panel.pixel_length.blockSignals(False)
-        method=self.preferences.value('last_calibration_method','none')
-        if method not in ('none','tag','numeric'):method='none'
+        dpi=self.preferences.value('last_dpi',None)
+        if dpi is None:
+            spacing=self.preferences.value('last_pixel_length',None)
+            try:dpi=25.4/float(spacing) if spacing is not None else 25.4/image.tagged_calibration.sx_mm if image.tagged_calibration else 72
+            except (ValueError,ZeroDivisionError):dpi=72
+        self.panel.dpi_input.setText(str(dpi))
+        method=self.preferences.value('last_calibration_method','dpi')
+        if method not in ('none','tag','numeric','dpi'):method='dpi'
         self.change_calibration(method)
         self.set_mode('pan');self.refresh()
     def open_image(self):self.browse_image_path()
@@ -316,6 +329,14 @@ class MainWindow(QMainWindow):
             elif action=='tag':
                 c=self.session.image.tagged_calibration
                 self.session.set_calibration(c,'tag','TIFFに利用可能な解像度タグがありません。他の校正方法を選んでください' if c is None else '')
+            elif action=='dpi':
+                try:
+                    dpi=float(self.panel.dpi_input.text())
+                    if not math.isfinite(dpi) or dpi<=0:raise ValueError()
+                    spacing=25.4/dpi
+                    if not math.isfinite(spacing) or spacing<=0:raise ValueError()
+                except (ValueError,OverflowError):self.session.set_calibration(None,'dpi','正の有限な数値をDPIで入力してください')
+                else:self.session.set_calibration(Calibration(spacing,spacing,'DPI入力'),'dpi')
             elif action=='numeric':
                 try:
                     spacing=float(self.panel.pixel_length.text())
@@ -337,17 +358,19 @@ class MainWindow(QMainWindow):
         snapshot=records[0].snapshot;calibration=snapshot.get('calibration')
         mode=snapshot.get('calibration_mode') or ('tag' if calibration and calibration.get('source')=='TIFF' else 'numeric' if calibration else 'none')
         if mode=='manual':mode='numeric'
-        if mode not in ('none','tag','numeric'):mode='none'
+        if mode not in ('none','tag','numeric','dpi'):mode='none'
         self.preferences.setValue('last_calibration_method',mode)
         if mode=='numeric' and calibration:self.preferences.setValue('last_pixel_length',format(calibration['sx_mm'],'.12g'))
+        if mode=='dpi' and calibration:self.preferences.setValue('last_dpi',format(25.4/calibration['sx_mm'],'.12g'))
         self.preferences.sync()
     def remember_resolution(self):
         s=self.session
         if s.calibration_error or not s.image:return
         method='numeric' if s.calibration_mode=='manual' else s.calibration_mode
-        if method not in ('none','tag','numeric'):return
+        if method not in ('none','tag','numeric','dpi'):return
         self.preferences.setValue('last_calibration_method',method)
         if method=='numeric' and s.calibration:self.preferences.setValue('last_pixel_length',format(s.calibration.sx_mm,'.12g'))
+        if s.calibration:self.preferences.setValue('last_dpi',format(25.4/s.calibration.sx_mm,'.12g'))
         self.preferences.sync()
     def finish_manual_calibration(self,a,b):
         self.perform(lambda:self.session.set_calibration(manual_calibration(a,b,self.panel.known_length.value()),'manual'))
@@ -394,7 +417,7 @@ class MainWindow(QMainWindow):
         if not s.can_detect or self._workers:
             self.show_error(s.readiness_message or '検出処理中です');return
         if not self.confirm_edits_discard(): return
-        s.set_detection_settings(settings)
+        s.set_detection_settings(settings);s.invalidate_detection();self.refresh()
         if self.backend_state!='ready':
             self._pending_detection=(s.revision,s.detection_inputs,settings)
             self.start_backend_preparation();self.refresh()
@@ -414,13 +437,11 @@ class MainWindow(QMainWindow):
         s=self.session
         if s.revision!=revision or not s.image or s.image.sha256!=image_hash:
             self.refresh();self.statusBar().showMessage('前の状態の検出結果を適用しませんでした'); return
-        if error: self.show_error(error)
+        if error:
+            s.invalidate_detection();self.show_error(error)
         else: s.apply_detection(revision,image_hash,result,discard)
         self.refresh()
-        if not error:QTimer.singleShot(0,self.reveal_results)
-        self.statusBar().showMessage('検出できませんでした。設定を変更して再検出してください' if error else '検出完了。画像と結果を確認して保存してください')
-    def reveal_results(self):
-        if not self._closing:self.analysis_scroll.ensureWidgetVisible(self.panel.save_button)
+        self.statusBar().showMessage('検出できませんでした。設定を変更して再検出してください' if error else '結果の処理が完了しました。「保存」で保存できます' if s.can_save else s.readiness_message)
     def select_spoke(self,spoke_id):
         self.view.selected_id=spoke_id; self.view.draw_overlay()
         self.panel.spoke_list.blockSignals(True)
@@ -431,7 +452,7 @@ class MainWindow(QMainWindow):
     def save(self):
         try:
             self.panel._identity()
-            self.session.confirm_step('result')
+            if not self.session.can_save:raise ValueError(self.session.readiness_message or '解析結果の処理が完了してから保存してください')
             record=self.session.measurement()
             self.remember_resolution()
             record=save_with_reference(self.connection,record,self.session.image)

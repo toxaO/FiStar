@@ -45,8 +45,9 @@ def test_session_switch_preserves_lines_and_disables_judgment():
     from tests.test_session import ready
     s=ready.__wrapped__(); original=s.spokes
     s.set_center_method('intersection_centroid')
-    assert s.spokes==original and not s.can_save and 'spokes' in s.confirmed_steps
-    s.confirm_step('result'); record=s.measurement(Limits('px',0,0))
+    assert s.spokes==original and s.can_save and 'spokes' in s.confirmed_steps
+    assert s.result.centroid_pixels is not None and 'result' not in s.confirmed_steps
+    record=s.measurement(Limits('px',0,0))
     assert record.judgment.radius==record.judgment.laser_distance=='not_evaluated'
     assert record.result.center_method=='intersection_centroid'
 
@@ -75,7 +76,8 @@ def test_centroid_ui(qapp,tmp_path):
     w=MainWindow(database_path=tmp_path/'gui.sqlite'); s=ready.__wrapped__(); w.session=s; w.panel.session=s
     s.set_center_method('minimax');s.confirm_step('result')
     w.refresh();w.panel.center_method.setCurrentIndex(w.panel.center_method.findData('intersection_centroid'))
-    assert s.center_method=='intersection_centroid' and not s.can_save
+    assert s.center_method=='intersection_centroid' and s.can_save
+    assert w.panel.save_button.isEnabled() and w.panel.stage_boxes['result'].property('stepState')=='complete'
     assert not hasattr(w.panel,'intersection_table')
     w.open_center_detail()
     assert w.detail_window.table.rowCount()==3
