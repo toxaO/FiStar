@@ -8,6 +8,8 @@
 
 [PDF版](docs/FiStar-user-manual.pdf) ／ [Markdown版](docs/user-manual.md)（2026年10月14日時点）
 
+最新版はMarkdown版です。FiStarフォルダをVS Codeで開き、Markdown PDF拡張で `docs/user-manual.md` を出力できます。用紙・余白・`docs/manual.css` の指定は `.vscode/settings.json` に設定しています。既存PDFは今回の編集では更新していません。
+
 ## 起動
 
 Python 3.11以上と、日本語を表示できるフォントが必要です。
