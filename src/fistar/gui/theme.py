@@ -56,7 +56,6 @@ QHeaderView::section { background: #eaf1f5; padding: 5px; border: 0; border-bott
 QCheckBox { spacing: 5px; }
 QLabel[muted="true"] { color: #516978; font-size: 12px; }
 QLabel:disabled { color: #85949e; }
-QFrame[displayOptions="true"] { background: #ffffff; border: 1px solid #dce5eb; border-radius: 5px; }
 QStatusBar::item { border: 0; }
 QStatusBar { background: #eaf0f4; color: #647b89; }
 QToolTip { background: #253b49; color: #ffffff; border: 0; padding: 5px; }

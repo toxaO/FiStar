@@ -102,21 +102,19 @@ class MainWindow(QMainWindow):
         self.sync_image_tool_buttons()
         self.view.navigation_mode_changed.connect(self.sync_image_tool_buttons)
         self.view.circle_measured.connect(self.update_circle_result)
-        self.display_frame=QFrame();self.display_frame.setFrameShape(QFrame.StyledPanel);self.display_frame.setProperty('displayOptions',True)
-        self.display_frame.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
-        display_layout=QVBoxLayout(self.display_frame);display_layout.setContentsMargins(6,4,6,4);display_layout.setSpacing(3)
-        self.display_toggle=QToolButton();self.display_toggle.setText('表示する項目');self.display_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.display_toggle.setArrowType(Qt.RightArrow);self.display_toggle.setCheckable(True);self.display_toggle.setAutoRaise(True)
-        display_layout.addWidget(self.display_toggle)
+        self.display_toggle=QToolButton()
+        self.display_toggle.setProperty('imageTool',True)
+        self.display_toggle.setText('表示オプション')
+        self.display_toggle.clicked.connect(self.show_display_options)
+        self.display_dialog=QDialog(self)
+        self.display_dialog.setWindowTitle('表示オプション')
+        display_layout=QVBoxLayout(self.display_dialog)
         self.overlay_controls=OverlayControls(self.view,columns=2,balanced=True)
-        self.display_scroll=QScrollArea();self.display_scroll.setWidgetResizable(True);self.display_scroll.setWidget(self.overlay_controls)
-        self.display_scroll.setFrameShape(QFrame.NoFrame);self.display_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.display_scroll.setFixedHeight(min(self.overlay_controls.sizeHint().height()+4,160))
-        display_layout.addWidget(self.display_scroll);self.display_scroll.setVisible(False)
-        def toggle_display(checked):
-            self.display_scroll.setVisible(checked)
-            self.display_toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
-        self.display_toggle.toggled.connect(toggle_display)
+        display_layout.addWidget(self.overlay_controls)
+        close_buttons=QDialogButtonBox(QDialogButtonBox.Close)
+        close_buttons.button(QDialogButtonBox.Close).setText('閉じる')
+        close_buttons.rejected.connect(self.display_dialog.reject)
+        display_layout.addWidget(close_buttons)
 
         splitter=QSplitter();splitter.setHandleWidth(3);image_panel=QWidget();image_layout=QVBoxLayout(image_panel);image_layout.setContentsMargins(0,0,0,0)
         image_layout.setSpacing(6);image_layout.addWidget(file_box)
@@ -127,7 +125,7 @@ class MainWindow(QMainWindow):
         tools_row=QHBoxLayout();tools_row.setSpacing(4)
         tools_row.addWidget(self.reset_tool_button)
         for button in self.image_tool_buttons.values():tools_row.addWidget(button)
-        tools_row.addStretch();tools_layout.addLayout(tools_row)
+        tools_row.addStretch();tools_row.addWidget(self.display_toggle);tools_layout.addLayout(tools_row)
         self.panel.calibration_label.setAlignment(Qt.AlignRight|Qt.AlignVCenter)
         self.ruler_bar=QWidget();ruler_layout=QHBoxLayout(self.ruler_bar);ruler_layout.setContentsMargins(0,0,0,0);ruler_layout.setSpacing(4)
         self.ruler_result=QLabel('画像上の2点を左クリックすると長さを測定します');self.ruler_result.setWordWrap(True);self.ruler_result.setProperty('muted',True);self.ruler_result.setAlignment(Qt.AlignTop|Qt.AlignLeft)
@@ -146,7 +144,7 @@ class MainWindow(QMainWindow):
         scroll=QScrollArea(); self.analysis_scroll=scroll;scroll.setWidgetResizable(True);scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); scroll.setWidget(self.panel)
         sidebar=QWidget();sidebar.setMinimumWidth(300);sidebar.setMaximumWidth(460);sidebar_layout=QVBoxLayout(sidebar);sidebar_layout.setContentsMargins(0,0,0,0);sidebar_layout.setSpacing(6)
         self.analysis_frame=QGroupBox('解析');self.analysis_frame.setObjectName('analysisFrame');analysis_layout=QVBoxLayout(self.analysis_frame);analysis_layout.setContentsMargins(3,3,3,3);analysis_layout.setSpacing(3);analysis_layout.addWidget(scroll)
-        sidebar_layout.addWidget(self.analysis_frame,1);sidebar_layout.addWidget(self.display_frame);splitter.addWidget(sidebar)
+        sidebar_layout.addWidget(self.analysis_frame,1);splitter.addWidget(sidebar)
         splitter.setStretchFactor(0,5);splitter.setStretchFactor(1,3);splitter.setSizes([650,400]); layout.addWidget(splitter,1)
         self.tabs.addTab(page,'解析')
         self.records=RecordsPanel(self.connection)
@@ -195,7 +193,7 @@ class MainWindow(QMainWindow):
             (browse,'TIFFを選ぶと、そのまま読み込みます。'),(self.open_button,'入力したパスの画像を開きます。'),
             (self.ruler_calibrate,'既知の長さを入力し、画像上の2点からmm/pxを求めます。'),
             (self.ruler_known,'校正に使う既知の長さをmmで入力します。'),(self.ruler_cancel,'校正を中止して元の解像度へ戻します。'),
-            (self.display_toggle,'画像に重ねる点・線・番号などの表示を切り替えます。'),
+            (self.display_toggle,'画像に重ねる点・線・番号などの表示を別ウィンドウで切り替えます。'),
             (self.device_name_entry,'解析の候補に追加する装置名を入力します。'),
             (device_add,'入力した装置名を候補リストに追加します。'),(device_delete,'選んだ装置名を候補から削除します。過去記録は残ります。'),
             (self.backend_retry,'解析機能の準備をやり直します。'),
@@ -514,8 +512,14 @@ class MainWindow(QMainWindow):
             added,missing=import_legacy(self.connection,source);self.records.refresh()
             QMessageBox.information(self,'取り込み完了',f'{added}件取り込みました。参考画像なし：{missing}件。元DBは変更していません。')
         except Exception as error:self.show_error(str(error))
+    def show_display_options(self):
+        self.display_dialog.show()
+        self.display_dialog.raise_()
+        self.display_dialog.activateWindow()
+
     def closeEvent(self,event):
         if self.allow_discard():
+            self.display_dialog.close()
             if self.detail_window: self.detail_window.close()
             if self.records.reference_window:self.records.reference_window.close()
             self._closing=True;self._pending_detection=None; self.pool.waitForDone(); self.connection.close(); event.accept()

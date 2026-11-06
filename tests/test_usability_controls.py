@@ -282,3 +282,22 @@ def test_main_image_resizes_square_with_margins_and_full_width_file_row(qapp,tmp
         if previous_side is not None:assert previous_side!=geometry.width()
         previous_side=geometry.width()
     w.session.dirty=False;w.close()
+
+
+def test_display_options_opens_modeless_dialog_from_image_tools(qapp,tmp_path):
+    w=MainWindow(database_path=tmp_path/'db.sqlite')
+    w.show();qapp.processEvents()
+    assert w.display_toggle.text()=='表示オプション'
+    assert w.display_toggle.parentWidget() is w.tools_frame
+    assert w.display_toggle.x()>w.ruler_tool_button.x()
+    viewport_size=w.view.viewport().size()
+    w.display_toggle.click();qapp.processEvents()
+    assert w.display_dialog.isVisible() and not w.display_dialog.isModal()
+    assert w.view.viewport().size()==viewport_size
+    w.overlay_controls.checks['laser'].click()
+    assert not w.view.visibility['laser']
+    w.display_dialog.close()
+    w.display_toggle.click()
+    assert not w.overlay_controls.checks['laser'].isChecked()
+    w.close()
+    assert not w.display_dialog.isVisible()
