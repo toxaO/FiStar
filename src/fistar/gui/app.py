@@ -12,7 +12,8 @@ from fistar.core.backend import prepare_backend
 from fistar.storage.portable import portable_data_dir,save_with_reference,import_legacy
 from .axis_settings import AxisSettings
 from .theme import STYLE
-from .hover_help import bind_tooltips
+from .hover_help import HoverHelp,bind_tooltips
+from .stage_help import OPERATION_HINTS
 from .image_view import ImageView
 from .overlay import OverlayControls
 from .center_detail import CenterDetail,SquareImagePanel
@@ -125,7 +126,25 @@ class MainWindow(QMainWindow):
         tools_row=QHBoxLayout();tools_row.setSpacing(4)
         tools_row.addWidget(self.reset_tool_button)
         for button in self.image_tool_buttons.values():tools_row.addWidget(button)
-        tools_row.addStretch();tools_row.addWidget(self.display_toggle);tools_layout.addLayout(tools_row)
+        tools_row.addStretch()
+        tools_row.addWidget(self.display_toggle)
+        self.tool_help_button=QToolButton()
+        self.tool_help_button.setProperty('helpButton',True)
+        self.tool_help_button.setIcon(QIcon(str(icon_dir.parent/'help.svg')))
+        self.tool_help_button.setIconSize(QSize(24,24))
+        self.tool_help_button.setFixedSize(28,28)
+        self.tool_help_button.setAccessibleName('画像ツールの操作ヘルプ')
+        self.tool_help=HoverHelp((self.tool_help_button,),(
+            '左ドラッグで移動。Shift＋左ドラッグで一時的に移動します。<br>'
+            'Ctrl＋左ドラッグでズーム。上で拡大、下で縮小します。<br>'
+            'スクロールでカーソルを中心に拡大・縮小。ダブルクリックで画像全体を表示します。<br><br>'
+            '手と虫眼鏡のボタンでも移動・ズームできます。<br>'
+            '円 ROI は中心からドラッグして平均画素値を表示。定規は2点をクリックし、端点をドラッグして調整します。<br>'
+            '「表示オプション」で点や線の表示を切り替えます。'
+        ),self)
+        self.tool_help_button.clicked.connect(lambda:self.tool_help.show_for(self.tool_help_button))
+        tools_row.addWidget(self.tool_help_button)
+        tools_layout.addLayout(tools_row)
         self.panel.calibration_label.setAlignment(Qt.AlignRight|Qt.AlignVCenter)
         self.ruler_bar=QWidget();ruler_layout=QHBoxLayout(self.ruler_bar);ruler_layout.setContentsMargins(0,0,0,0);ruler_layout.setSpacing(4)
         self.ruler_result=QLabel('画像上の2点を左クリックすると長さを測定します');self.ruler_result.setWordWrap(True);self.ruler_result.setProperty('muted',True);self.ruler_result.setAlignment(Qt.AlignTop|Qt.AlignLeft)
@@ -137,9 +156,17 @@ class MainWindow(QMainWindow):
             policy=retained.sizePolicy();policy.setRetainSizeWhenHidden(True);retained.setSizePolicy(policy)
         self.ruler_known_frame.hide();self.ruler_bar.hide();tools_row.insertWidget(5,self.ruler_bar)
         self.panel.calibration_label.hide()
-        self.operation_help=QLabel('ドラッグで移動／スクロールで拡大縮小\nダブルクリックで倍率リセット');self.operation_help.setWordWrap(True);self.operation_help.setProperty('muted',True)
-        self.operation_help.setAlignment(Qt.AlignTop|Qt.AlignLeft)
-        self.tool_message=QStackedWidget();self.tool_message.addWidget(self.operation_help);self.tool_message.addWidget(self.ruler_result);tools_layout.addWidget(self.tool_message)
+        self.operation_help=QLabel(OPERATION_HINTS[self.panel.current_stage])
+        self.tool_hint=QLabel()
+        for label in (self.operation_help,self.tool_hint):
+            label.setWordWrap(True)
+            label.setProperty('muted',True)
+            label.setAlignment(Qt.AlignTop|Qt.AlignLeft)
+        tools_layout.addWidget(self.operation_help)
+        self.tool_message=QStackedWidget()
+        self.tool_message.addWidget(self.tool_hint)
+        self.tool_message.addWidget(self.ruler_result)
+        tools_layout.addWidget(self.tool_message)
         image_layout.addWidget(self.tools_frame);self.statusBar().addPermanentWidget(self.image_info,1);self.image_info.setAlignment(Qt.AlignVCenter|Qt.AlignRight);self.statusBar().setSizeGripEnabled(False);splitter.addWidget(image_panel)
         scroll=QScrollArea(); self.analysis_scroll=scroll;scroll.setWidgetResizable(True);scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); scroll.setWidget(self.panel)
         sidebar=QWidget();sidebar.setMinimumWidth(300);sidebar.setMaximumWidth(460);sidebar_layout=QVBoxLayout(sidebar);sidebar_layout.setContentsMargins(0,0,0,0);sidebar_layout.setSpacing(6)
@@ -230,6 +257,7 @@ class MainWindow(QMainWindow):
     def show_error(self,error): QMessageBox.warning(self,'操作を完了できません',error)
     def select_stage(self,stage):
         self.panel.select_stage(stage)
+        self.operation_help.setText(OPERATION_HINTS[self.panel.current_stage])
     def move_stage(self,direction):
         if self.tabs.currentIndex()!=0:return
         stages=self.panel.stage_order;index=stages.index(self.panel.current_stage)
@@ -249,7 +277,7 @@ class MainWindow(QMainWindow):
         self.view.set_mode(mode)
         self.sync_image_tool_buttons()
         self.ruler_bar.setVisible(mode=='ruler')
-        self.tool_message.setCurrentWidget(self.ruler_result if mode=='ruler' else self.operation_help)
+        self.tool_message.setCurrentWidget(self.ruler_result if mode=='ruler' else self.tool_hint)
         if mode=='ruler':self.update_ruler_result();return
         if mode=='circle':
             self.update_circle_result(self.view.circle_mean())
@@ -258,9 +286,9 @@ class MainWindow(QMainWindow):
                 'calibration':'校正用の2点を画像上で左クリックしてください',
                 'laser':'左クリックで基準点指定（操作後に解除）',
                 'zoom':'上へドラッグで拡大、下へドラッグで縮小',
-                'pan':'左ドラッグで移動／スクロールでズーム／ダブルクリックで全体表示',
+                'pan':'',
             }
-            self.operation_help.setText(help_text[mode]+'\nShift＋ドラッグで移動／Ctrl＋ドラッグでズーム')
+            self.tool_hint.setText(help_text[mode])
 
     def sync_image_tool_buttons(self):
         for mode,button in self.image_tool_buttons.items():
@@ -268,7 +296,7 @@ class MainWindow(QMainWindow):
 
     def update_circle_result(self,value):
         if self.view.mode=='circle':
-            self.operation_help.setText('中心からドラッグして円を指定してください' if value is None else f'円内の平均画素値：{value:.1f}')
+            self.tool_hint.setText('中心からドラッグして円を指定してください' if value is None else f'円内の平均画素値：{value:.1f}')
 
     def refresh(self):
         self.panel.set_axes(list_axes(self.connection))

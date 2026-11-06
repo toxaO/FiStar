@@ -4,7 +4,7 @@ import pytest
 import tifffile
 from PySide6.QtCore import Qt,QPoint,QEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QWidget,QPushButton,QVBoxLayout,QApplication
+from PySide6.QtWidgets import QWidget,QPushButton,QVBoxLayout,QApplication,QLabel
 from fistar.gui.app import MainWindow
 from fistar.gui.hover_help import HoverHelp
 from fistar.core.models import Point,LoadedImage
@@ -48,7 +48,7 @@ def test_shift_drag_pans_without_setting_laser(qapp,tmp_path):
     assert w.view.mode=='laser' and w.panel.laser_button.isChecked()
     QTest.mouseClick(viewport,Qt.LeftButton,Qt.NoModifier,start)
     assert w.view.mode=='pan' and not w.panel.laser_button.isChecked()
-    assert 'ダブルクリック' in w.operation_help.text()
+    assert '装置と回転軸' in w.operation_help.text()
     w.session.dirty=False;w.close()
 
 
@@ -301,3 +301,41 @@ def test_display_options_opens_modeless_dialog_from_image_tools(qapp,tmp_path):
     assert not w.overlay_controls.checks['laser'].isChecked()
     w.close()
     assert not w.display_dialog.isVisible()
+
+def test_image_tool_help_tracks_analysis_stage_during_measurement(qapp,tmp_path):
+    w=MainWindow(database_path=tmp_path/'db.sqlite')
+    assert '装置と回転軸' in w.operation_help.text()
+    w.set_mode('ruler')
+    for stage,text in (
+        ('laser','基準点選択'),
+        ('calibration','解像度'),
+        ('spokes','照射帯を検出'),
+        ('result','保存'),
+    ):
+        w.select_stage(stage)
+        assert text in w.operation_help.text()
+        assert w.tool_message.currentWidget() is w.ruler_result
+    w.close()
+
+def test_image_tool_help_shows_on_hover(qapp,tmp_path):
+    w=MainWindow(database_path=tmp_path/'db.sqlite')
+    w.backend_state='ready'
+    w.show();qapp.processEvents()
+    button=w.tool_help_button
+    helper=w.tool_help
+    assert button.parentWidget() is w.tools_frame
+    assert button.x()>w.display_toggle.x()
+    assert not button.icon().isNull()
+
+    helper.timer.setInterval(20)
+    QApplication.sendEvent(button,QEvent(QEvent.Enter))
+    assert not helper.popup.isVisible()
+    QTest.qWait(100)
+    assert helper.popup.isVisible()
+    text=helper.popup.findChild(QLabel).text()
+    assert all(term in text for term in ('Shift','Ctrl','スクロール','定規','表示オプション'))
+    QApplication.sendEvent(button,QEvent(QEvent.Leave))
+    assert not helper.popup.isVisible()
+    button.click()
+    assert helper.popup.isVisible()
+    w.close()

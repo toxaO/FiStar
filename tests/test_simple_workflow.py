@@ -171,6 +171,6 @@ def test_navigation_preserves_ruler_point_and_circle_uses_analysis_values(qapp,t
     QTest.mousePress(viewport,Qt.LeftButton,pos=view.mapFromScene(QPointF(45,45)))
     QTest.mouseMove(viewport,view.mapFromScene(QPointF(55,45)))
     QTest.mouseRelease(viewport,Qt.LeftButton,pos=view.mapFromScene(QPointF(55,45)))
-    assert '1234' in w.operation_help.text()
+    assert '1234' in w.tool_hint.text()
     assert w.session.revision==revision
     w.session.dirty=False;w.close()
