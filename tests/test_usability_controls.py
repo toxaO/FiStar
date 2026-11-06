@@ -16,21 +16,27 @@ def test_resolution_survives_restart_and_reloads_tiff_tags(qapp,tmp_path,monkeyp
     tifffile.imwrite(second,np.zeros((30,30),dtype=np.uint16),resolution=(200,400),resolutionunit='INCH')
     db=tmp_path/'test.sqlite';w=MainWindow(database_path=db)
     w.path_edit.setText(str(first));w.load_from_path()
-    w.panel.pixel_length.setText('0.123456');w.change_calibration('numeric');w.session.dirty=False;w.close()
+    w.panel.dpi_input.setValue(203.125);w.change_calibration('dpi');w.session.dirty=False;w.close()
     w=MainWindow(database_path=db);w.path_edit.setText(str(second));w.load_from_path()
-    assert w.session.calibration_mode=='numeric' and w.session.calibration.sx_mm==pytest.approx(.123456)
+    assert w.session.calibration_mode=='dpi' and w.session.calibration.sx_mm==pytest.approx(25.4/203.125)
     w.change_calibration('tag');assert w.session.calibration.sx_mm==pytest.approx(25.4/200)
     monkeypatch.setattr(w,'allow_discard',lambda:True);w.path_edit.setText(str(first));w.load_from_path()
     assert w.session.calibration.sx_mm==pytest.approx(25.4/100)
     w.session.dirty=False;w.close()
 
 
-def test_invalid_numeric_does_not_replace_valid_memory(qapp,tmp_path):
+def test_legacy_numeric_preference_is_loaded_as_dpi(qapp,tmp_path):
+    image=tmp_path/'sample.tif'
+    tifffile.imwrite(image,np.zeros((30,30),dtype=np.uint16))
     w=MainWindow(database_path=tmp_path/'test.sqlite')
-    w.session.set_image(LoadedImage(Path('dummy.tif'),np.zeros((100,100),dtype=np.uint16),'dummy',None))
-    w.panel.pixel_length.setText('.2');w.change_calibration('numeric')
-    w.panel.pixel_length.setText('bad');w.change_calibration('numeric')
-    assert w.preferences.value('last_pixel_length')=='0.2'
+    w.preferences.setValue('last_calibration_method','numeric')
+    w.preferences.setValue('last_pixel_length','0.2')
+    w.path_edit.setText(str(image));w.load_from_path()
+    assert w.panel.calibration_method.findData('numeric')==-1
+    assert w.panel.dpi_input.value()==pytest.approx(127)
+    assert w.session.calibration_mode=='dpi'
+    assert w.session.calibration.sx_mm==pytest.approx(.2)
+    assert w.preferences.value('last_calibration_method')=='dpi'
     w.session.dirty=False;w.close()
 
 
@@ -95,8 +101,8 @@ def test_previous_record_seeds_resolution_preferences(qapp,tmp_path):
     s=ready.__wrapped__();s.set_calibration(Calibration(.25,.25,'manual'),'manual');s.confirm_step('result')
     db=tmp_path/'test.sqlite';c=connect_database(db);save_measurement(c,s.measurement());c.close()
     w=MainWindow(database_path=db)
-    assert w.preferences.value('last_calibration_method')=='numeric'
-    assert float(w.preferences.value('last_pixel_length'))==pytest.approx(.25)
+    assert w.preferences.value('last_calibration_method')=='dpi'
+    assert float(w.preferences.value('last_dpi'))==pytest.approx(101.6)
     w.close()
 
 
@@ -183,10 +189,10 @@ def test_result_completes_automatically_and_invalid_changes_block_save(qapp,tmp_
     assert "再検出" in errors[-1]
     w.session.set_detection(w.session.detection);w.refresh()
     assert w.session.can_save and w.panel.stage_boxes["result"].property("stepState")=="complete"
-    w.panel.dpi_input.setText("0");w.change_calibration("dpi")
+    w.panel.dpi_input.setValue(0);w.change_calibration("dpi")
     assert w.session.calibration_error and not w.session.can_save and not w.panel.save_button.isEnabled()
     assert w.panel.stage_boxes["result"].property("stepState")=="incomplete"
-    w.panel.dpi_input.setText("254");w.change_calibration("dpi")
+    w.panel.dpi_input.setValue(254);w.change_calibration("dpi")
     assert w.session.can_save and w.panel.save_button.isEnabled()
     assert w.panel.current_stage==current and w.analysis_scroll.verticalScrollBar().value()==scroll
     w.session.dirty=False;w.close()
@@ -214,7 +220,7 @@ def test_dpi_default_conversion_tag_display_and_restart(qapp,tmp_path,monkeypatc
     w.path_edit.setText(str(image));w.load_from_path()
     assert w.session.calibration_mode=="dpi"
     assert w.session.calibration.sx_mm==pytest.approx(25.4/100)
-    w.panel.dpi_input.setText("254");w.change_calibration("dpi")
+    w.panel.dpi_input.setValue(254);w.change_calibration("dpi")
     assert w.session.calibration.sx_mm==pytest.approx(.1)
     assert "254" in w.image_info.text() and "DPI" in w.panel.summary.text()
     w.session.dirty=False;w.close()
@@ -223,20 +229,20 @@ def test_dpi_default_conversion_tag_display_and_restart(qapp,tmp_path,monkeypatc
     w.change_calibration("tag")
     assert w.session.calibration.sx_mm==pytest.approx(25.4/100)
     assert w.session.calibration.sy_mm==pytest.approx(25.4/200)
-    assert "X 100" in w.image_info.text() and "Y 200" in w.image_info.text() and "DPI" in w.image_info.text()
-    assert "X 100" in w.panel.calibration_label.text() and "Y 200" in w.panel.summary.text()
-    assert "X 100" in w.panel.tag_dpi_label.text() and "Y 200" in w.panel.tag_dpi_label.text()
+    assert w.panel.tag_dpi_label.text()=="100 DPI"
+    for text in (w.image_info.text(),w.panel.calibration_label.text(),w.panel.summary.text()):
+        assert "100 DPI" in text
+        assert "X 100" not in text and "Y 200" not in text
     w.change_calibration("dpi")
     assert w.session.calibration.sx_mm==pytest.approx(.1)
     w.session.dirty=False;w.close()
 
 
-@pytest.mark.parametrize("value",["0","-1","nan","inf","bad"])
-def test_invalid_dpi_preserves_valid_preference(qapp,tmp_path,value):
+def test_zero_dpi_preserves_valid_preference(qapp,tmp_path):
     w=MainWindow(database_path=tmp_path/"invalid-dpi.sqlite")
     w.session.set_image(LoadedImage(Path("dummy.tif"),np.zeros((30,30)),"dummy",None))
-    w.panel.dpi_input.setText("127");w.change_calibration("dpi")
-    w.panel.dpi_input.setText(value);w.change_calibration("dpi")
+    w.panel.dpi_input.setValue(127);w.change_calibration("dpi")
+    w.panel.dpi_input.setValue(0);w.change_calibration("dpi")
     assert w.session.calibration_error and not w.session.can_detect
     assert float(w.preferences.value("last_dpi"))==pytest.approx(127)
     assert "DPI" in w.session.calibration_error
@@ -339,3 +345,40 @@ def test_image_tool_help_shows_on_hover(qapp,tmp_path):
     button.click()
     assert helper.popup.isVisible()
     w.close()
+
+
+def test_analysis_wheel_scrolls_panel_and_buttons_step_resolution(qapp,tmp_path):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QDoubleSpinBox,QStyle,QStyleOptionSpinBox
+
+    w=MainWindow(database_path=tmp_path/'db.sqlite')
+    w.backend_state='ready'
+    w.session.set_image(LoadedImage(tmp_path/'sample.tif',np.zeros((30,30),np.uint16),'sample',None))
+    w.show();w.resize(900,400);qapp.processEvents()
+    panel=w.panel
+    scroll=w.analysis_scroll.verticalScrollBar()
+    assert scroll.maximum()>0
+    panel.dpi_input.setValue(72)
+    w.change_calibration('dpi')
+    for field,value in ((panel.axis,panel.axis.currentIndex),(panel.radius,panel.radius.value),
+                        (panel.dpi_input,panel.dpi_input.text)):
+        scroll.setValue(0)
+        field.setFocus()
+        before=value()
+        pos=field.rect().center()
+        event=QWheelEvent(QPointF(pos),QPointF(field.mapToGlobal(pos)),QPoint(),QPoint(0,-120),
+                          Qt.NoButton,Qt.NoModifier,Qt.ScrollUpdate,False)
+        QApplication.sendEvent(field,event)
+        assert value()==before
+        assert scroll.value()>0
+
+    spin=panel.dpi_input
+    assert isinstance(spin,QDoubleSpinBox)
+    option=QStyleOptionSpinBox()
+    spin.initStyleOption(option)
+    up=spin.style().subControlRect(QStyle.CC_SpinBox,option,QStyle.SC_SpinBoxUp,spin)
+    QTest.mouseClick(spin,Qt.LeftButton,pos=up.center())
+    assert spin.value()==73
+    assert w.session.calibration.sx_mm==pytest.approx(25.4/73)
+    w.session.dirty=False;w.close()

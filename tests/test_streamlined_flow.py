@@ -44,10 +44,10 @@ def test_calibration_dropdown_and_live_radius(qapp,tmp_path):
     assert s.calibration is None
     w.panel.calibration_method.setCurrentIndex(w.panel.calibration_method.findData('tag'))
     assert s.calibration.sx_mm==.1 and s.calibration.sy_mm==.2
-    w.panel.calibration_method.setCurrentIndex(w.panel.calibration_method.findData('numeric'))
-    w.panel.pixel_length.clear();w.change_calibration('numeric')
+    w.panel.calibration_method.setCurrentIndex(w.panel.calibration_method.findData('dpi'))
+    w.panel.dpi_input.setValue(0);w.change_calibration('dpi')
     assert s.calibration_error and not s.can_detect
-    w.panel.pixel_length.setText('0.1');w.change_calibration('numeric')
+    w.panel.dpi_input.setValue(254);w.change_calibration('dpi')
     assert s.calibration.sx_mm==pytest.approx(.1) and s.can_detect
     w.panel.calibration_method.setCurrentIndex(w.panel.calibration_method.findData('none'))
     assert s.calibration is None and s.can_detect

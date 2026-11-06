@@ -1,9 +1,10 @@
+import sys
 from dataclasses import replace
 from html import escape
 from pathlib import Path
 from PySide6.QtCore import Signal, Qt, QEvent, QSize
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QGroupBox,QLabel,QPushButton,QComboBox,QLineEdit,QFormLayout,QDoubleSpinBox,QListWidget,QListWidgetItem,QTableWidget,QTableWidgetItem,QHeaderView,QAbstractButton,QAbstractSpinBox,QAbstractItemView)
+from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QGroupBox,QLabel,QPushButton,QComboBox,QLineEdit,QFormLayout,QDoubleSpinBox,QListWidget,QListWidgetItem,QTableWidget,QTableWidgetItem,QHeaderView,QAbstractButton,QAbstractSpinBox,QAbstractItemView,QSizePolicy)
 from fistar.core.models import DetectionSettings
 from .hover_help import HoverHelp
 from .stage_help import stage_help_text
@@ -52,19 +53,25 @@ class AnalysisPanel(QWidget):
         self.device.currentTextChanged.connect(self._identity);self.axis.currentIndexChanged.connect(self._identity)
         layout=group('3  解像度','calibration')
         self.calibration_method=QComboBox()
-        for label,value in [('DPI入力','dpi'),('TIFFタグ','tag'),('mm/px入力','numeric'),('未校正','none')]:self.calibration_method.addItem(label,value)
-        self.pixel_length=QLineEdit();self.pixel_length.setPlaceholderText('例：0.1');self.pixel_length.setToolTip('1pxあたりの長さをmmで入力します。正の有限値を指定してください。')
-        self.dpi_input=QLineEdit('72');self.dpi_input.setPlaceholderText('例：72')
+        for label,value in [('DPI入力','dpi'),('TIFFタグ','tag'),('未校正','none')]:self.calibration_method.addItem(label,value)
+        self.dpi_input=QDoubleSpinBox()
+        self.dpi_input.setDecimals(6)
+        self.dpi_input.setRange(0,sys.float_info.max)
+        self.dpi_input.setSingleStep(1)
+        self.dpi_input.setKeyboardTracking(False)
+        self.dpi_input.setValue(72)
+        self.dpi_input.setAccessibleName('解像度（DPI）')
+        self.dpi_input.setMinimumWidth(132)
+        self.dpi_input.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed)
         self.resolution_unit=QLabel('DPI');self.tag_dpi_label=QLabel();self.tag_dpi_label.setWordWrap(True)
         self.numeric_frame=QWidget();numeric_layout=QHBoxLayout(self.numeric_frame);numeric_layout.setContentsMargins(0,0,0,0);numeric_layout.setSpacing(6)
-        numeric_layout.addWidget(self.pixel_length,1);numeric_layout.addWidget(self.dpi_input,1);numeric_layout.addWidget(self.resolution_unit);numeric_layout.addWidget(self.tag_dpi_label,1)
+        numeric_layout.addWidget(self.dpi_input,1);numeric_layout.addWidget(self.resolution_unit);numeric_layout.addWidget(self.tag_dpi_label,1)
         calibration_row=QHBoxLayout();calibration_row.setSpacing(8);calibration_row.addWidget(self.calibration_method);calibration_row.addWidget(self.numeric_frame,1);layout.addLayout(calibration_row)
         self.calibration_label=QLabel();self.calibration_label.setWordWrap(True);layout.addWidget(self.calibration_label)
         # Retain the old reference-length value only for loading existing records.
         self.known_length=QDoubleSpinBox(self);self.known_length.hide();self.known_length.setRange(.001,10000);self.known_length.setValue(10)
         self.calibration_method.currentIndexChanged.connect(lambda:self.calibration_requested.emit(self.calibration_method.currentData()))
-        self.pixel_length.textEdited.connect(lambda:self.calibration_requested.emit('numeric'))
-        self.dpi_input.textEdited.connect(lambda:self.calibration_requested.emit('dpi'))
+        self.dpi_input.valueChanged.connect(lambda:self.calibration_requested.emit('dpi'))
         laser_layout=group('2  レーザー基準点','laser')
         self.laser_step=QLabel('未指定（基準点選択ボタンで指定）');self.laser_step.setWordWrap(True);laser_layout.addWidget(self.laser_step)
         self.laser_button=QPushButton('基準点選択');self.laser_button.setCheckable(True);self.laser_button.setProperty('laserSelection',True);self.laser_button.toggled.connect(lambda checked:self.mode_requested.emit('laser' if checked else 'pan'));laser_layout.addWidget(self.laser_button)
@@ -160,21 +167,22 @@ class AnalysisPanel(QWidget):
         for stage in ('calibration','spokes'):
             for widget in self.stage_boxes[stage].findChildren(QWidget,options=Qt.FindDirectChildrenOnly):
                 if widget not in (self.stage_headers[stage],self.stage_help_buttons[stage]):widget.setEnabled(s.image is not None)
-        fields=(self.device,self.axis,self.spoke_list,self.radius,self.peak_height,self.calibration_method,self.known_length,self.pixel_length,self.dpi_input,self.center_method)
+        fields=(self.device,self.axis,self.spoke_list,self.radius,self.peak_height,self.calibration_method,self.known_length,self.dpi_input,self.center_method)
         for widget in fields:widget.blockSignals(True)
         self.device.setCurrentText(s.device)
-        self.axis.setCurrentIndex(self.axis.findData(s.axis));self.calibration_method.setCurrentIndex(self.calibration_method.findData('numeric' if s.calibration_mode=='manual' else s.calibration_mode))
+        self.axis.setCurrentIndex(self.axis.findData(s.axis))
+        method='dpi' if s.calibration_mode in ('manual','numeric') else s.calibration_mode
+        self.calibration_method.setCurrentIndex(self.calibration_method.findData(method))
         c=s.calibration
-        self.calibration_label.setText(s.calibration_error or (f'{c.source}: X {25.4/c.sx_mm:.8g}, Y {25.4/c.sy_mm:.8g} DPI' if c else '未校正：pxで評価します'))
+        self.calibration_label.setText(s.calibration_error or (f'{c.source}: {25.4/c.sx_mm:.8g} DPI' if c else '未校正：pxで評価します'))
         self.numeric_frame.setVisible(True)
-        self.numeric_frame.setEnabled(s.calibration_mode in ('dpi','numeric','manual','tag'))
-        dpi=s.calibration_mode=='dpi'
-        tag=s.calibration_mode=='tag'
-        self.dpi_input.setVisible(dpi);self.pixel_length.setVisible(not dpi and not tag);self.resolution_unit.setVisible(not tag);self.resolution_unit.setText('DPI' if dpi else 'mm/px')
-        self.tag_dpi_label.setVisible(tag);self.tag_dpi_label.setText(f'X {25.4/c.sx_mm:.8g} / Y {25.4/c.sy_mm:.8g} DPI' if c else 'DPIタグなし')
+        dpi=method=='dpi'
+        tag=method=='tag'
+        self.numeric_frame.setEnabled(dpi or tag)
+        self.dpi_input.setVisible(dpi);self.resolution_unit.setVisible(dpi)
+        self.tag_dpi_label.setVisible(tag);self.tag_dpi_label.setText(f'{25.4/c.sx_mm:.8g} DPI' if c else 'DPIタグなし')
         if c and c.reference:self.known_length.setValue(c.reference[2])
-        if c and dpi and not self.dpi_input.hasFocus():self.dpi_input.setText(f'{25.4/c.sx_mm:.12g}')
-        if c and not self.pixel_length.hasFocus():self.pixel_length.setText(f'{c.sx_mm:.12g}')
+        if c and dpi and not self.dpi_input.hasFocus():self.dpi_input.setValue(25.4/c.sx_mm)
         if c and s.calibration_mode in ('dpi','numeric','manual') and c.sx_mm!=c.sy_mm:
             self.calibration_label.setText(self.calibration_label.text()+'\n入力値の変更後はX・Yに同じ値を使用します。')
         if s.detection_settings:self.radius.setValue(s.detection_settings.radius_ratio*100);self.peak_height.setValue(s.detection_settings.min_peak_height*100)
@@ -192,7 +200,7 @@ class AnalysisPanel(QWidget):
         self.warnings.setText('' if s.image and s.laser is None and not s.calibration_error else s.readiness_message)
         self.detect_button.setEnabled(s.can_detect);self.save_button.setEnabled(s.can_save and s.dirty)
         self.detail_button.setEnabled(s.result is not None and s.result.selected is not None and not s.requires_redetection)
-        calibration=f'X {25.4/c.sx_mm:.8g}, Y {25.4/c.sy_mm:.8g} DPI ({c.source})' if c else '未校正（px）'
+        calibration=f'{25.4/c.sx_mm:.8g} DPI ({c.source})' if c else '未校正（px）'
         laser=f'({s.laser.x:.3f}, {s.laser.y:.3f}) px' if s.laser else '未指定'
         self.summary.setText(result_table([
             ('画像名',s.image.path.name if s.image else '画像未選択'),

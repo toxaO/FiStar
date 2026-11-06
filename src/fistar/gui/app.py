@@ -2,9 +2,9 @@ import sys
 import math
 from sqlite3 import Error as SQLiteError
 from pathlib import Path
-from PySide6.QtCore import Qt,QObject,Signal,QRunnable,QThreadPool,QStandardPaths,QSize,QSettings,QTimer
-from PySide6.QtWidgets import (QApplication,QToolButton,QGroupBox,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QSplitter,QScrollArea,QTabWidget,QPushButton,QLabel,QFileDialog,QMessageBox,QDialog,QFormLayout,QComboBox,QLineEdit,QDialogButtonBox,QDoubleSpinBox,QFrame,QSizePolicy,QStackedWidget,QListWidget)
-from PySide6.QtGui import QIcon,QShortcut,QKeySequence
+from PySide6.QtCore import Qt,QEvent,QObject,Signal,QRunnable,QThreadPool,QStandardPaths,QSize,QSettings,QTimer
+from PySide6.QtWidgets import (QApplication,QToolButton,QGroupBox,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QSplitter,QScrollArea,QTabWidget,QPushButton,QLabel,QFileDialog,QMessageBox,QDialog,QFormLayout,QComboBox,QLineEdit,QDialogButtonBox,QDoubleSpinBox,QFrame,QSizePolicy,QStackedWidget,QListWidget,QAbstractSpinBox)
+from PySide6.QtGui import QIcon,QShortcut,QKeySequence,QWheelEvent
 from fistar.core.imaging import load_tiff,analysis_channel,manual_calibration
 from fistar.workflow.session import AnalysisSession
 from fistar.core.detection import detect_spokes
@@ -120,7 +120,7 @@ class MainWindow(QMainWindow):
         splitter=QSplitter();splitter.setHandleWidth(3);image_panel=QWidget();image_layout=QVBoxLayout(image_panel);image_layout.setContentsMargins(0,0,0,0)
         image_layout.setSpacing(6);image_layout.addWidget(file_box)
         self.panel=AnalysisPanel(self.session)
-        self.panel.dpi_input.setText(str(self.preferences.value('last_dpi','72')))
+        self.panel.dpi_input.setValue(self.preferred_dpi())
         self.square_image=SquareImagePanel(self.view,alignment=Qt.AlignHCenter,inset=8);self.square_image.setMinimumSize(160,160);self.view.setMinimumSize(64,64);image_layout.addWidget(self.square_image,1)
         self.tools_frame=QFrame();self.tools_frame.setObjectName('stableImageTools');tools_layout=QVBoxLayout(self.tools_frame);tools_layout.setContentsMargins(6,4,6,3);tools_layout.setSpacing(2)
         tools_row=QHBoxLayout();tools_row.setSpacing(4)
@@ -226,7 +226,23 @@ class MainWindow(QMainWindow):
             (self.backend_retry,'解析機能の準備をやり直します。'),
             (import_button,'旧DBを変更せず、過去記録と参考JPEGをdataへ取り込みます。')]:field.setToolTip(description)
         self.hover_helpers=bind_tooltips(self)
+        QApplication.instance().installEventFilter(self)
         self.refresh()
+    def eventFilter(self,watched,event):
+        if (event.type()==QEvent.Wheel
+                and isinstance(watched,(QAbstractSpinBox,QComboBox,QLineEdit))
+                and self.analysis_scroll.isAncestorOf(watched)):
+            viewport=self.analysis_scroll.viewport()
+            scroll_event=QWheelEvent(
+                viewport.mapFromGlobal(event.globalPosition()),event.globalPosition(),
+                event.pixelDelta(),event.angleDelta(),event.buttons(),event.modifiers(),
+                event.phase(),event.inverted(),event.source(),event.pointingDevice(),
+            )
+            QApplication.sendEvent(viewport,scroll_event)
+            event.accept()
+            return True
+        return super().eventFilter(watched,event)
+
     def showEvent(self,event):
         super().showEvent(event)
         if self.backend_state=='idle':QTimer.singleShot(0,self.start_backend_preparation)
@@ -311,7 +327,7 @@ class MainWindow(QMainWindow):
         if image:
             h,w=image.raw.shape[:2]
             c=self.session.calibration
-            resolution=f'解像度 X {25.4/c.sx_mm:.8g}, Y {25.4/c.sy_mm:.8g} DPI' if c else '未校正（px）'
+            resolution=f'解像度 {25.4/c.sx_mm:.8g} DPI' if c else '未校正（px）'
             self.image_info.setText(f'表示中：{image.path.name} ／ {w}×{h} px ／ {image.raw.dtype.itemsize*8} bit ／ {resolution}')
             if not self.path_edit.hasFocus():self.path_edit.setText(str(image.path))
         else:self.image_info.setText('TIFF画像を指定して開いてください')
@@ -377,17 +393,30 @@ class MainWindow(QMainWindow):
         self.preferences.setValue('last_image_path',str(image.path.resolve()));self.preferences.sync()
         axis=self.preferences.value('last_axis','gantry')
         axes=list_axes(self.connection);self.session.axis=axis if axis in [a['id'] for a in axes] else axes[0]['id']
-        self.panel.pixel_length.blockSignals(True);self.panel.pixel_length.setText(str(self.preferences.value('last_pixel_length','')));self.panel.pixel_length.blockSignals(False)
-        dpi=self.preferences.value('last_dpi',None)
-        if dpi is None:
-            spacing=self.preferences.value('last_pixel_length',None)
-            try:dpi=25.4/float(spacing) if spacing is not None else 25.4/image.tagged_calibration.sx_mm if image.tagged_calibration else 72
-            except (ValueError,ZeroDivisionError):dpi=72
-        self.panel.dpi_input.setText(str(dpi))
+        self.panel.dpi_input.blockSignals(True)
+        self.panel.dpi_input.setValue(self.preferred_dpi(image.tagged_calibration))
+        self.panel.dpi_input.blockSignals(False)
         method=self.preferences.value('last_calibration_method','dpi')
-        if method not in ('none','tag','numeric','dpi'):method='dpi'
+        if method not in ('none','tag','dpi'):method='dpi'
         self.change_calibration(method)
         self.set_mode('pan');self.refresh()
+    def preferred_dpi(self,tagged_calibration=None):
+        stored_dpi=self.preferences.value('last_dpi',None)
+        legacy_spacing=self.preferences.value('last_pixel_length',None)
+        try:
+            if self.preferences.value('last_calibration_method')=='numeric' and legacy_spacing is not None:
+                dpi=25.4/float(legacy_spacing)
+            elif stored_dpi is not None:
+                dpi=float(stored_dpi)
+            elif tagged_calibration is not None:
+                dpi=25.4/tagged_calibration.sx_mm
+            else:
+                dpi=72
+            if math.isfinite(dpi) and dpi>0:
+                return dpi
+        except (TypeError,ValueError,ZeroDivisionError):
+            pass
+        return 72
     def open_image(self):self.browse_image_path()
     def confirm_edits_discard(self):
         if not any(s.origin=='manual' for s in self.session.spokes): return True
@@ -402,18 +431,12 @@ class MainWindow(QMainWindow):
                 self.session.set_calibration(c,'tag','TIFFに利用可能な解像度タグがありません。他の校正方法を選んでください' if c is None else '')
             elif action=='dpi':
                 try:
-                    dpi=float(self.panel.dpi_input.text())
+                    dpi=self.panel.dpi_input.value()
                     if not math.isfinite(dpi) or dpi<=0:raise ValueError()
                     spacing=25.4/dpi
                     if not math.isfinite(spacing) or spacing<=0:raise ValueError()
                 except (ValueError,OverflowError):self.session.set_calibration(None,'dpi','正の有限な数値をDPIで入力してください')
                 else:self.session.set_calibration(Calibration(spacing,spacing,'DPI入力'),'dpi')
-            elif action=='numeric':
-                try:
-                    spacing=float(self.panel.pixel_length.text())
-                    if not math.isfinite(spacing) or spacing<=0:raise ValueError()
-                except ValueError:self.session.set_calibration(None,'numeric','正の数値をmm/pxで入力してください')
-                else:self.session.set_calibration(Calibration(spacing,spacing,'入力値'),'numeric')
             elif action=='manual':
                 c=self.session.calibration
                 if c and c.reference:
@@ -427,20 +450,18 @@ class MainWindow(QMainWindow):
         records=list_measurements(self.connection)
         if not records:return
         snapshot=records[0].snapshot;calibration=snapshot.get('calibration')
-        mode=snapshot.get('calibration_mode') or ('tag' if calibration and calibration.get('source')=='TIFF' else 'numeric' if calibration else 'none')
-        if mode=='manual':mode='numeric'
-        if mode not in ('none','tag','numeric','dpi'):mode='none'
+        mode=snapshot.get('calibration_mode') or ('tag' if calibration and calibration.get('source')=='TIFF' else 'dpi' if calibration else 'none')
+        if mode in ('manual','numeric'):mode='dpi'
+        if mode not in ('none','tag','dpi'):mode='none'
         self.preferences.setValue('last_calibration_method',mode)
-        if mode=='numeric' and calibration:self.preferences.setValue('last_pixel_length',format(calibration['sx_mm'],'.12g'))
         if mode=='dpi' and calibration:self.preferences.setValue('last_dpi',format(25.4/calibration['sx_mm'],'.12g'))
         self.preferences.sync()
     def remember_resolution(self):
         s=self.session
         if s.calibration_error or not s.image:return
-        method='numeric' if s.calibration_mode=='manual' else s.calibration_mode
-        if method not in ('none','tag','numeric','dpi'):return
+        method='dpi' if s.calibration_mode in ('manual','numeric') else s.calibration_mode
+        if method not in ('none','tag','dpi'):return
         self.preferences.setValue('last_calibration_method',method)
-        if method=='numeric' and s.calibration:self.preferences.setValue('last_pixel_length',format(s.calibration.sx_mm,'.12g'))
         if s.calibration:self.preferences.setValue('last_dpi',format(25.4/s.calibration.sx_mm,'.12g'))
         self.preferences.sync()
     def finish_manual_calibration(self,a,b):
