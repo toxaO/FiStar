@@ -30,7 +30,7 @@ class SquareImagePanel(QWidget):
 
 class CenterDetail(QDialog):
     """Non-modal, read-only view. Display state never touches the analysis."""
-    def __init__(self,parent=None):
+    def __init__(self,parent=None,reset_label='全点を収める'):
         super().__init__(parent); self.setWindowTitle('中心付近の拡大'); self.resize(1280,850)
         self._auto_fit_active=True; self._fit_pending=False; self._fitting=False
         self.image_key=None; self.view=ImageView(); self.view.read_only=True
@@ -38,8 +38,23 @@ class CenterDetail(QDialog):
         self.view.reset_callback=self.center_on_result
         root=QVBoxLayout(self); tools=QHBoxLayout(); self.buttons={}
         icons=Path(__file__).parent/'assets/icons/tools'
-        reset=QToolButton();reset.setProperty('imageTool',True);reset.setIcon(QIcon(str(icons/'tools_reset.png')));reset.setIconSize(QSize(24,24));reset.setToolTip('全点を収める（縮尺リセット）');reset.setAccessibleName('全点を収める');reset.clicked.connect(self.center_on_result);tools.addWidget(reset)
+        reset=QToolButton();reset.setProperty('imageTool',True);reset.setIcon(QIcon(str(icons/'tools_reset.png')));reset.setIconSize(QSize(24,24));reset.setToolTip(reset_label+'（ダブルクリックでもリセット）');reset.setAccessibleName(reset_label);reset.clicked.connect(lambda:self.view.reset_callback());tools.addWidget(reset)
         self.reset_tool_button=reset
+        for mode,filename,text in (
+            ('pan','tools_hand.png','移動：Shift＋左ドラッグでも操作できます'),
+            ('zoom','tools_loupe.png','ズーム：Ctrl＋左ドラッグでも操作できます'),
+        ):
+            button=QToolButton()
+            button.setProperty('imageTool',True)
+            button.setIcon(QIcon(str(icons/filename)))
+            button.setIconSize(QSize(24,24))
+            button.setCheckable(True)
+            button.setToolTip(text)
+            button.setAccessibleName(text.split('：',1)[0])
+            button.clicked.connect(lambda checked,mode=mode:self.set_mode(mode if checked else 'pan'))
+            self.buttons[mode]=button
+            tools.addWidget(button)
+        self.view.navigation_mode_changed.connect(self.sync_navigation_tools)
         self.scale_bar=ScaleBar(); tools.addWidget(self.scale_bar)
         self.scale_label=QLabel(); tools.addWidget(self.scale_label); tools.addStretch(); root.addLayout(tools)
         self.controls=OverlayControls(self.view)
@@ -69,7 +84,9 @@ class CenterDetail(QDialog):
         self.hover_helpers=bind_tooltips(self)
     def set_mode(self,mode):
         self.view.set_mode(mode)
-        for name,button in self.buttons.items(): button.setChecked(name==mode)
+        self.sync_navigation_tools()
+    def sync_navigation_tools(self):
+        for name,button in self.buttons.items(): button.setChecked(name==self.view.effective_mode)
     def sync(self,source):
         session=source.session
         if not session.image or not session.result or session.result.selected is None:

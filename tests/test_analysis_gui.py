@@ -83,7 +83,7 @@ def test_removed_edit_modes_and_manual_calibration(qapp,tmp_path):
     w=MainWindow(database_path=tmp_path/'db.sqlite'); w.session=s; w.panel.session=s
     w.refresh(); w.show(); qapp.processEvents(); w.view.reset_view()
     import pytest
-    for mode in ('spoke','add','zoom'):
+    for mode in ('spoke','add'):
         with pytest.raises(ValueError): w.view.set_mode(mode)
     w.view.set_mode('calibration'); w.panel.known_length.setValue(10)
     QTest.mouseClick(w.view.viewport(),Qt.LeftButton,pos=w.view.mapFromScene(QPointF(1,1)))

@@ -70,11 +70,38 @@ class MainWindow(QMainWindow):
         path_row.addWidget(self.path_edit,1);path_row.addWidget(browse);path_row.addWidget(self.open_button);file_layout.addLayout(path_row)
         self.image_info=QLabel('TIFF画像を指定して開いてください');self.image_info.setWordWrap(False);self.image_info.setMinimumWidth(0);self.image_info.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed);self.image_info.setProperty('muted',True)
         icon_dir=Path(__file__).parent/'assets/icons/tools'
-        self.pan_tool_button=QToolButton();self.reset_tool_button=QToolButton();self.ruler_tool_button=QToolButton()
-        for button,name,text in ((self.pan_tool_button,'tools_hand.png','画像表示調節：ドラッグで移動／スクロールで拡大縮小\nダブルクリックで倍率リセット'),(self.reset_tool_button,'tools_reset.png','画像全体を表示'),(self.ruler_tool_button,'tools_ruler.png','定規：2点で長さを測定。校正ボタンで既知長さから解像度を計算')):
-            button.setProperty('imageTool',True);button.setIcon(QIcon(str(icon_dir/name)));button.setIconSize(QSize(24,24));button.setFixedSize(32,32);button.setToolTip(text);button.setAccessibleName(text);button.setAutoRaise(True)
-        self.pan_tool_button.setCheckable(True);self.pan_tool_button.setChecked(True);self.pan_tool_button.clicked.connect(lambda:self.set_mode('pan'))
-        self.reset_tool_button.clicked.connect(lambda:self.view.reset_view());self.ruler_tool_button.setCheckable(True);self.ruler_tool_button.clicked.connect(lambda:self.set_mode('ruler'))
+        self.reset_tool_button=QToolButton()
+        self.reset_tool_button.setProperty('imageTool',True)
+        self.reset_tool_button.setIcon(QIcon(str(icon_dir/'tools_reset.png')))
+        self.reset_tool_button.setIconSize(QSize(24,24))
+        self.reset_tool_button.setFixedSize(32,32)
+        self.reset_tool_button.setToolTip('画像全体を表示。ダブルクリックでもリセットできます')
+        self.reset_tool_button.setAccessibleName('画像全体を表示')
+        self.reset_tool_button.clicked.connect(self.view.reset_view)
+        self.image_tool_buttons={}
+        for mode,name,text in (
+            ('pan','tools_hand.png','移動：Shift＋左ドラッグでも一時的に移動できます'),
+            ('zoom','tools_loupe.png','ズーム：上へドラッグで拡大、下へドラッグで縮小。Ctrl＋左ドラッグでも操作できます'),
+            ('circle','tools_circle.png','円：中心からドラッグして範囲内の平均画素値を確認します'),
+            ('ruler','tools_ruler.png','定規：2点をクリックして距離を測定。端点をドラッグして調整できます'),
+        ):
+            button=QToolButton()
+            button.setProperty('imageTool',True)
+            button.setIcon(QIcon(str(icon_dir/name)))
+            button.setIconSize(QSize(24,24))
+            button.setFixedSize(32,32)
+            button.setToolTip(text)
+            button.setAccessibleName(text.split('：',1)[0])
+            button.setCheckable(True)
+            button.clicked.connect(lambda checked,mode=mode:self.set_mode('pan' if self.view.mode==mode else mode))
+            self.image_tool_buttons[mode]=button
+        self.pan_tool_button=self.image_tool_buttons['pan']
+        self.zoom_tool_button=self.image_tool_buttons['zoom']
+        self.circle_tool_button=self.image_tool_buttons['circle']
+        self.ruler_tool_button=self.image_tool_buttons['ruler']
+        self.sync_image_tool_buttons()
+        self.view.navigation_mode_changed.connect(self.sync_image_tool_buttons)
+        self.view.circle_measured.connect(self.update_circle_result)
         self.display_frame=QFrame();self.display_frame.setFrameShape(QFrame.StyledPanel);self.display_frame.setProperty('displayOptions',True)
         self.display_frame.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
         display_layout=QVBoxLayout(self.display_frame);display_layout.setContentsMargins(6,4,6,4);display_layout.setSpacing(3)
@@ -98,7 +125,8 @@ class MainWindow(QMainWindow):
         self.square_image=SquareImagePanel(self.view,alignment=Qt.AlignHCenter,inset=8);self.square_image.setMinimumSize(160,160);self.view.setMinimumSize(64,64);image_layout.addWidget(self.square_image,1)
         self.tools_frame=QFrame();self.tools_frame.setObjectName('stableImageTools');tools_layout=QVBoxLayout(self.tools_frame);tools_layout.setContentsMargins(6,4,6,3);tools_layout.setSpacing(2)
         tools_row=QHBoxLayout();tools_row.setSpacing(4)
-        for button in (self.pan_tool_button,self.reset_tool_button,self.ruler_tool_button):tools_row.addWidget(button)
+        tools_row.addWidget(self.reset_tool_button)
+        for button in self.image_tool_buttons.values():tools_row.addWidget(button)
         tools_row.addStretch();tools_layout.addLayout(tools_row)
         self.panel.calibration_label.setAlignment(Qt.AlignRight|Qt.AlignVCenter)
         self.ruler_bar=QWidget();ruler_layout=QHBoxLayout(self.ruler_bar);ruler_layout.setContentsMargins(0,0,0,0);ruler_layout.setSpacing(4)
@@ -109,7 +137,7 @@ class MainWindow(QMainWindow):
         self.ruler_cancel=QPushButton('中止');self.ruler_cancel.setFixedWidth(44);self.ruler_cancel.clicked.connect(lambda:self.set_mode('pan'));known_layout.addWidget(self.ruler_cancel);ruler_layout.addWidget(self.ruler_known_frame)
         for retained in (self.ruler_bar,self.ruler_known_frame,self.panel.numeric_frame):
             policy=retained.sizePolicy();policy.setRetainSizeWhenHidden(True);retained.setSizePolicy(policy)
-        self.ruler_known_frame.hide();self.ruler_bar.hide();tools_row.insertWidget(3,self.ruler_bar)
+        self.ruler_known_frame.hide();self.ruler_bar.hide();tools_row.insertWidget(5,self.ruler_bar)
         self.panel.calibration_label.hide()
         self.operation_help=QLabel('ドラッグで移動／スクロールで拡大縮小\nダブルクリックで倍率リセット');self.operation_help.setWordWrap(True);self.operation_help.setProperty('muted',True)
         self.operation_help.setAlignment(Qt.AlignTop|Qt.AlignLeft)
@@ -165,7 +193,6 @@ class MainWindow(QMainWindow):
         for field,description in [
             (self.path_edit,'解析するTIFFのパスを指定します。Enterでも開けます。'),
             (browse,'TIFFを選ぶと、そのまま読み込みます。'),(self.open_button,'入力したパスの画像を開きます。'),
-            (self.pan_tool_button,'ドラッグで移動、スクロールで拡大縮小、ダブルクリックで倍率リセット。'),
             (self.ruler_calibrate,'既知の長さを入力し、画像上の2点からmm/pxを求めます。'),
             (self.ruler_known,'校正に使う既知の長さをmmで入力します。'),(self.ruler_cancel,'校正を中止して元の解像度へ戻します。'),
             (self.display_toggle,'画像に重ねる点・線・番号などの表示を切り替えます。'),
@@ -222,12 +249,29 @@ class MainWindow(QMainWindow):
                 self.session.set_calibration(self.session.calibration,'manual');self.refresh()
         self.panel.laser_button.blockSignals(True);self.panel.laser_button.setChecked(mode=='laser');self.panel.laser_button.setText('基準点選択中' if mode=='laser' else '基準点選択');self.panel.laser_button.blockSignals(False)
         self.view.set_mode(mode)
-        self.pan_tool_button.blockSignals(True);self.pan_tool_button.setChecked(mode=='pan');self.pan_tool_button.blockSignals(False)
-        self.ruler_tool_button.blockSignals(True);self.ruler_tool_button.setChecked(mode=='ruler');self.ruler_tool_button.blockSignals(False)
+        self.sync_image_tool_buttons()
         self.ruler_bar.setVisible(mode=='ruler')
         self.tool_message.setCurrentWidget(self.ruler_result if mode=='ruler' else self.operation_help)
         if mode=='ruler':self.update_ruler_result();return
-        self.operation_help.setText('校正用の2点を画像上で左クリックしてください' if mode=='calibration' else ('左クリックで基準点指定（操作後に解除）\nShift＋ドラッグで画像移動' if mode=='laser' else 'ドラッグで移動／スクロールで拡大縮小\nダブルクリックで倍率リセット'))
+        if mode=='circle':
+            self.update_circle_result(self.view.circle_mean())
+        else:
+            help_text={
+                'calibration':'校正用の2点を画像上で左クリックしてください',
+                'laser':'左クリックで基準点指定（操作後に解除）',
+                'zoom':'上へドラッグで拡大、下へドラッグで縮小',
+                'pan':'左ドラッグで移動／スクロールでズーム／ダブルクリックで全体表示',
+            }
+            self.operation_help.setText(help_text[mode]+'\nShift＋ドラッグで移動／Ctrl＋ドラッグでズーム')
+
+    def sync_image_tool_buttons(self):
+        for mode,button in self.image_tool_buttons.items():
+            button.setChecked(self.view.effective_mode==mode)
+
+    def update_circle_result(self,value):
+        if self.view.mode=='circle':
+            self.operation_help.setText('中心からドラッグして円を指定してください' if value is None else f'円内の平均画素値：{value:.1f}')
+
     def refresh(self):
         self.panel.set_axes(list_axes(self.connection))
         axis=next((a for a in list_axes(self.connection) if a['id']==self.session.axis),None)
@@ -245,7 +289,8 @@ class MainWindow(QMainWindow):
             self.image_info.setText(f'表示中：{image.path.name} ／ {w}×{h} px ／ {image.raw.dtype.itemsize*8} bit ／ {resolution}')
             if not self.path_edit.hasFocus():self.path_edit.setText(str(image.path))
         else:self.image_info.setText('TIFF画像を指定して開いてください')
-        self.ruler_tool_button.setEnabled(image is not None)
+        for button in (self.zoom_tool_button,self.circle_tool_button,self.ruler_tool_button):
+            button.setEnabled(image is not None)
         if image and self._ruler_hash!=image.sha256:self._ruler_pair=None;self._ruler_hash=image.sha256
         self.update_ruler_result()
         self.sync_detail()
@@ -380,7 +425,7 @@ class MainWindow(QMainWindow):
         if not self.session.image:return
         if not self._ruler_calibrating:
             self._ruler_original=(self.session.calibration,self.session.calibration_mode,self.session.calibration_error)
-        self._ruler_calibrating=True;self._ruler_pair=None;self.view.ruler_points=();self.view.set_mode('ruler')
+        self._ruler_calibrating=True;self._ruler_pair=None;self.view.ruler_points=();self.set_mode('ruler')
         self.ruler_known_frame.show();self.ruler_known.clear();self.ruler_known.setFocus()
         self.session.set_calibration(self.session.calibration,self.session.calibration_mode,'既知の長さをmmで入力し、画像上の2点を指定してください')
         self.refresh()

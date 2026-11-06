@@ -1,12 +1,16 @@
 import math
+import sys
 import numpy as np
-from PySide6.QtCore import Qt, Signal, QPointF, QRectF
-from PySide6.QtGui import QImage, QPixmap, QPen, QColor, QFont, QBrush, QPainter
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene
+from PySide6.QtCore import Qt, Signal, QEvent, QPointF, QRectF
+from PySide6.QtGui import QImage, QPixmap, QPen, QColor, QFont, QBrush, QPainter, QCursor
+from PySide6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QWidget
 from .overlay import DEFAULTS, overlay_font, label_layout
 from fistar.core.models import Point
 from fistar.core.detection import search_radius
 from fistar.core.imaging import analysis_channel, display_image
+
+NAVIGATION_CONTROL_MODIFIER = Qt.MetaModifier if sys.platform == "darwin" else Qt.ControlModifier
+
 
 class ImageView(QGraphicsView):
     laser_selected=Signal(object)
@@ -16,6 +20,8 @@ class ImageView(QGraphicsView):
     view_changed=Signal()
     viewport_resized=Signal()
     navigation_started=Signal()
+    navigation_mode_changed=Signal()
+    circle_measured=Signal(object)
     def __init__(self,parent=None):
         super().__init__(parent)
         self.visibility=dict(DEFAULTS); self.read_only=False; self.reset_callback=None;self._fit_full_image=False
@@ -29,22 +35,86 @@ class ImageView(QGraphicsView):
         self._key=None; self._pending=None; self._overlay=[]
         self._values=None; self._image_item=None; self.display_low=0.; self.display_high=1.
         self._navigation_drag=None; self._navigation_position=None
+        self._navigation_button=None
+        self._zoom_start=None
+        self._temporary_navigation=None
+        self._circle=None
+        self._circle_start=None
+        self._ruler_endpoint=None
+        self._zoom_cursor=QCursor(Qt.SizeVerCursor)
         self.set_mode('pan')
+        QApplication.instance().installEventFilter(self)
     def set_mode(self,mode):
         mode=mode or 'pan'
-        if mode not in ('pan','laser','calibration','ruler'): raise ValueError('画像操作が不正です')
-        if self.read_only: mode='pan'
+        if mode not in ('pan','zoom','laser','calibration','ruler','circle'): raise ValueError('画像操作が不正です')
+        if self.read_only and mode not in ('pan','zoom'): mode='pan'
         self.mode=mode; self._pending=None;self._laser_preview=None;self._laser_start=None
         self.viewport().update()
-        self._navigation_drag=None; self._navigation_position=None
+        self._cancel_navigation_drag()
+        self._circle_start=None
+        self._ruler_endpoint=None
         self.setDragMode(QGraphicsView.NoDrag)
-        self.setCursor(Qt.OpenHandCursor if mode=='pan' else Qt.CrossCursor)
+        self._update_cursor()
+
+    @property
+    def effective_mode(self):
+        return self._temporary_navigation or self.mode
+
+    def _update_cursor(self):
+        if self._navigation_drag=='pan':
+            self.setCursor(Qt.ClosedHandCursor)
+        elif self.effective_mode=='pan':
+            self.setCursor(Qt.OpenHandCursor)
+        elif self.effective_mode=='zoom':
+            self.setCursor(self._zoom_cursor)
+        else:
+            self.setCursor(Qt.CrossCursor)
+
+    def _cancel_navigation_drag(self):
+        self._navigation_drag=None
+        self._navigation_position=None
+        self._navigation_button=None
+        self._zoom_start=None
+
+    @staticmethod
+    def _navigation_mode(modifiers):
+        if modifiers & NAVIGATION_CONTROL_MODIFIER:
+            return 'zoom'
+        if modifiers & Qt.ShiftModifier:
+            return 'pan'
+        return None
+
+    def _set_navigation_modifiers(self, modifiers):
+        mode=self._navigation_mode(modifiers)
+        if mode!=self._temporary_navigation:
+            self._temporary_navigation=mode
+            self._update_cursor()
+            self.navigation_mode_changed.emit()
+
+    def eventFilter(self, watched, event):
+        kind=event.type()
+        if kind==QEvent.ApplicationDeactivate or (kind==QEvent.WindowDeactivate and watched is self.window()):
+            self._cancel_navigation_drag()
+            self._set_navigation_modifiers(Qt.NoModifier)
+            self._update_cursor()
+        elif kind in (QEvent.KeyPress,QEvent.KeyRelease) and isinstance(watched,QWidget) and watched.window() is self.window() and self.isVisible():
+            navigation_key=Qt.Key_Meta if sys.platform=='darwin' else Qt.Key_Control
+            modifier={Qt.Key_Shift:Qt.ShiftModifier,navigation_key:NAVIGATION_CONTROL_MODIFIER}.get(event.key())
+            if modifier is not None:
+                modifiers=event.modifiers()
+                self._set_navigation_modifiers(modifiers | modifier if kind==QEvent.KeyPress else modifiers & ~modifier)
+        return super().eventFilter(watched,event)
     def set_session(self,session):
         self.session=session
         if session.image is None: return
         key=(session.image.sha256,'luminance')
         if key!=self._key:
             self.ruler_points=();self._pending=None
+            self._circle=None
+            self._circle_start=None
+            self._ruler_endpoint=None
+            self._cancel_navigation_drag()
+            self.circle_measured.emit(None)
             values=analysis_channel(session.image)
             low,high=np.percentile(values,[.5,99.5])
             if high<=low: high=low+1
@@ -135,6 +205,10 @@ class ImageView(QGraphicsView):
                 self._add(self.scene().addEllipse(center.x()-rx,center.y()-ry,2*rx,2*ry,pen))
             if v['offset'] and s.laser:
                 self._add(self.scene().addLine(s.laser.x,s.laser.y,center.x(),center.y(),pen))
+        if self._circle is not None:
+            center,radius=self._circle
+            pen=QPen(QColor('#51e1e3'),2);pen.setCosmetic(True)
+            self._add(self.scene().addEllipse(center.x-radius,center.y-radius,2*radius,2*radius,pen))
         if self.ruler_points:
             pen=QPen(QColor('#ff78b5'),2);pen.setCosmetic(True)
             if len(self.ruler_points)==2:
@@ -212,18 +286,36 @@ class ImageView(QGraphicsView):
         self._zoom_by(1.1,self.mapToScene(self.viewport().rect()).boundingRect().center())
     def zoom_out(self):
         self._zoom_by(1/1.1,self.mapToScene(self.viewport().rect()).boundingRect().center())
+    def _zoom_at(self,factor,position,anchor):
+        scale=self.transform().m11()
+        fit=min(self.viewport().width()/self._image_item.pixmap().width(),
+                self.viewport().height()/self._image_item.pixmap().height())
+        minimum=min(fit/16,scale)
+        maximum=max(64.,fit*64,scale)
+        new_scale=max(minimum,min(maximum,scale*factor))
+        center=self.mapToScene(self.viewport().rect()).boundingRect().center()
+        center=anchor+(center-self.mapToScene(position))*scale/new_scale
+        self._zoom_by(new_scale/scale,center)
+
     def wheelEvent(self,event):
-        delta=event.angleDelta().y() or event.pixelDelta().y()
-        if delta and self._image_item is not None:
-            self.navigation_started.emit()
-            center=self.mapToScene(self.viewport().rect()).boundingRect().center()
-            self._zoom_by(math.pow(1.2,max(-8,min(8,delta/120))),center)
+        if self._image_item is not None:
+            position=event.position().toPoint()
+            anchor=self.mapToScene(position)
+            pixels=event.pixelDelta().y()
+            angle=event.angleDelta().y()
+            if (pixels or angle) and self._image_item.boundingRect().contains(anchor):
+                self.navigation_started.emit()
+                factor=math.pow(1.004,pixels) if pixels else math.pow(1.1,angle/120)
+                self._zoom_at(factor,position,anchor)
         event.accept()
+
     def mouseDoubleClickEvent(self,event):
-        self._navigation_drag=None; self._pending=None
+        self._cancel_navigation_drag()
+        self._update_cursor()
         if self.reset_callback: self.reset_callback()
         else: self.reset_view()
         event.accept()
+
     def resizeEvent(self,event):
         super().resizeEvent(event); self.view_changed.emit(); self.viewport_resized.emit()
     def _point(self,event):
@@ -232,56 +324,142 @@ class ImageView(QGraphicsView):
     def mousePressEvent(self,event):
         if not self.session or not self.session.image:
             return super().mousePressEvent(event)
-        if event.button()!=Qt.LeftButton:return super().mousePressEvent(event)
-        if self.mode=='laser' and event.modifiers() & Qt.ShiftModifier and not self.read_only:
-            self._laser_start=None;self._laser_preview=None
-            self.navigation_started.emit();self._navigation_drag='pan';self._navigation_position=event.position()
-            self.setCursor(Qt.ClosedHandCursor);event.accept();return
-        if self.mode=='laser' and not self.read_only:
-            point=self._point(event)
-            if self._image_item.boundingRect().contains(QPointF(point.x,point.y)):
-                self._laser_start=point
-                self._laser_preview=point;self.viewport().update()
-            event.accept();return
-        if self.mode=='pan':
+        temporary=self._navigation_mode(event.modifiers())
+        mac_control_click=sys.platform=='darwin' and event.button()==Qt.RightButton and temporary=='zoom'
+        if event.button()!=Qt.LeftButton and not mac_control_click:
+            return super().mousePressEvent(event)
+        self._set_navigation_modifiers(event.modifiers())
+        if self.effective_mode in ('pan','zoom'):
             self.navigation_started.emit()
-            self._navigation_drag='pan'; self._navigation_position=event.position()
-            self.setCursor(Qt.ClosedHandCursor)
-            event.accept(); return
+            self._navigation_drag=self.effective_mode
+            self._navigation_position=event.position()
+            self._navigation_button=event.button()
+            if self._navigation_drag=='zoom':
+                position=event.position().toPoint()
+                self._zoom_start=(position,self.mapToScene(position))
+            self._update_cursor()
+            event.accept()
+            return
         if self.read_only:
-            event.accept(); return
+            event.accept()
+            return
+
         p=self._point(event)
-        if not self._image_item.boundingRect().contains(QPointF(p.x,p.y)): return
-        if self.mode in ('calibration','ruler'):
+        if not self._image_item.boundingRect().contains(QPointF(p.x,p.y)):
+            return
+        if self.mode=='laser':
+            self._laser_start=p
+            self._laser_preview=p
+            self.viewport().update()
+        elif self.mode=='circle':
+            self._circle_start=p
+            self._circle=None
+            self.circle_measured.emit(None)
+            self.draw_overlay()
+        elif self.mode in ('calibration','ruler'):
+            if self.mode=='ruler' and len(self.ruler_points)==2:
+                scale=self.transform().m11()
+                distances=[math.hypot(p.x-point.x,p.y-point.y) for point in self.ruler_points]
+                index=distances.index(min(distances))
+                if distances[index]*scale<=8:
+                    point=self.ruler_points[index]
+                    self._ruler_endpoint=(index,p,point)
+                    event.accept()
+                    return
             if self._pending is None:
                 self._pending=p
-                if self.mode=='ruler':self.ruler_points=(p,);self.draw_overlay();self.view_changed.emit()
-            else:
-                first=self._pending; self._pending=None
                 if self.mode=='ruler':
-                    self.ruler_points=(first,p);self.draw_overlay();self.ruler_selected.emit(first,p)
-                else:self.calibration_selected.emit(first,p)
+                    self.ruler_points=(p,)
+                    self.draw_overlay()
+                    self.view_changed.emit()
+            else:
+                first=self._pending
+                self._pending=None
+                if self.mode=='ruler':
+                    self.ruler_points=(first,p)
+                    self.draw_overlay()
+                    self.ruler_selected.emit(first,p)
+                else:
+                    self.calibration_selected.emit(first,p)
         event.accept()
+
+    def _update_circle(self,point):
+        center=self._circle_start
+        radius=math.hypot(point.x-center.x,point.y-center.y)
+        self._circle=(center,radius) if radius else None
+        self.draw_overlay()
+
+    def circle_mean(self):
+        if self._circle is None:
+            return None
+        center,radius=self._circle
+        height,width=self._values.shape
+        # Scene coordinates are pixel edges, so sample at pixel centers.
+        cx,cy=center.x-.5,center.y-.5
+        left=max(0,math.ceil(cx-radius))
+        right=min(width,math.floor(cx+radius)+1)
+        top=max(0,math.ceil(cy-radius))
+        bottom=min(height,math.floor(cy+radius)+1)
+        y,x=np.ogrid[top:bottom,left:right]
+        mask=(x-cx)**2+(y-cy)**2<=radius**2
+        values=self._values[top:bottom,left:right][mask]
+        return float(values.mean(dtype=np.float64)) if values.size else None
+
+    def _move_ruler_endpoint(self,point):
+        index,start,original=self._ruler_endpoint
+        target=Point(original.x+(point.x-start.x),original.y+(point.y-start.y))
+        if self._image_item.boundingRect().contains(QPointF(target.x,target.y)):
+            points=list(self.ruler_points)
+            points[index]=target
+            self.ruler_points=tuple(points)
+            self.draw_overlay()
+
     def mouseMoveEvent(self,event):
-        if self.mode=='laser' and self._laser_start is not None:
-            event.accept();return
         if self._navigation_drag:
             delta=event.position()-self._navigation_position
-            if not delta.isNull():self._fit_full_image=False
-            scale=self.transform().m11()
-            center=self.mapToScene(self.viewport().rect()).boundingRect().center()-delta/scale
-            self.reserve_view_center(center,scale); self.centerOn(center)
-            self._navigation_position=event.position(); self.view_changed.emit()
-            event.accept(); return
-        super().mouseMoveEvent(event)
+            if self._navigation_drag=='zoom' and delta.y():
+                position,anchor=self._zoom_start
+                self._zoom_at(math.pow(1.004,max(-175,min(175,-delta.y()))),position,anchor)
+            elif self._navigation_drag=='pan' and not delta.isNull():
+                self._fit_full_image=False
+                scale=self.transform().m11()
+                center=self.mapToScene(self.viewport().rect()).boundingRect().center()-delta/scale
+                self.reserve_view_center(center,scale)
+                self.centerOn(center)
+                self.view_changed.emit()
+            self._navigation_position=event.position()
+        elif self._circle_start is not None:
+            self._update_circle(self._point(event))
+        elif self._ruler_endpoint is not None:
+            self._move_ruler_endpoint(self._point(event))
+        elif self._laser_start is None:
+            return super().mouseMoveEvent(event)
+        event.accept()
+
     def mouseReleaseEvent(self,event):
-        if self.mode=='laser' and event.button()==Qt.LeftButton and self._laser_start is not None:
+        if self._navigation_drag and event.button()==self._navigation_button:
+            self._cancel_navigation_drag()
+            self._set_navigation_modifiers(event.modifiers())
+            self._update_cursor()
+        elif event.button()!=Qt.LeftButton:
+            return super().mouseReleaseEvent(event)
+        elif self.mode=='laser' and self._laser_start is not None:
             point=self._point(event)
             moved=math.hypot(point.x-self._laser_start.x,point.y-self._laser_start.y)*self.transform().m11()>3
             self._laser_start=None;self._laser_preview=None
             if not moved and self._image_item.boundingRect().contains(QPointF(point.x,point.y)):self.laser_selected.emit(point)
-            self.laser_selection_finished.emit();self.viewport().update();event.accept();return
-        if self._navigation_drag:
-            self._navigation_drag=None; self._navigation_position=None
-            self.setCursor(Qt.OpenHandCursor if self.mode=='pan' else Qt.CrossCursor); event.accept(); return
-        super().mouseReleaseEvent(event)
+            self.laser_selection_finished.emit()
+            self.viewport().update()
+        elif self._circle_start is not None:
+            self._update_circle(self._point(event))
+            self._circle_start=None
+            self.circle_measured.emit(self.circle_mean())
+        elif self._ruler_endpoint is not None:
+            index,_,original=self._ruler_endpoint
+            self._move_ruler_endpoint(self._point(event))
+            self._ruler_endpoint=None
+            if self.ruler_points[index]!=original:
+                self.ruler_selected.emit(*self.ruler_points)
+        else:
+            return super().mouseReleaseEvent(event)
+        event.accept()

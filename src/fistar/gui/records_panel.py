@@ -175,14 +175,12 @@ class RecordsPanel(QWidget):
         if session is None:QMessageBox.warning(self,'参考画像',error);return
         source=ImageView();source.set_session(session)
         if self.reference_window:self.reference_window.close();self.reference_window.deleteLater()
-        self.reference_window=CenterDetail(self);self.reference_window.setWindowTitle('過去記録の参考画像（閲覧専用）')
+        self.reference_window=CenterDetail(self,reset_label='画像全体を表示');self.reference_window.setWindowTitle('過去記録の参考画像（閲覧専用）')
         viewer=self.reference_window;viewer.sync(source)
-        full=QPushButton('画像全体');full.setToolTip('参考JPEGの全体を表示します。');viewer.layout().itemAt(0).layout().insertWidget(1,full)
         def show_full():
             viewer.manual_navigation();viewer.view.reset_view();viewer.fit_status.setText('参考JPEGを全体表示しています。点・線の編集と再解析はできません。')
-        from .hover_help import bind_tooltips
-        viewer.hover_helpers.extend(bind_tooltips(viewer))
-        full.clicked.connect(show_full);viewer.manual_navigation();viewer.show();QTimer.singleShot(0,show_full);source.deleteLater()
+        viewer.view.reset_callback=show_full
+        viewer.manual_navigation();viewer.show();QTimer.singleShot(0,show_full);source.deleteLater()
     def export_csv(self):
         path,_=QFileDialog.getSaveFileName(self,'一覧をCSV保存','fistar.csv','CSV (*.csv)')
         if path:
