@@ -148,13 +148,13 @@ class MainWindow(QMainWindow):
         self.panel.calibration_label.setAlignment(Qt.AlignRight|Qt.AlignVCenter)
         self.ruler_bar=QWidget();ruler_layout=QHBoxLayout(self.ruler_bar);ruler_layout.setContentsMargins(0,0,0,0);ruler_layout.setSpacing(4)
         self.ruler_result=QLabel('画像上の2点を左クリックすると長さを測定します');self.ruler_result.setWordWrap(True);self.ruler_result.setProperty('muted',True);self.ruler_result.setAlignment(Qt.AlignTop|Qt.AlignLeft)
-        self.ruler_calibrate=QPushButton('校正');self.ruler_calibrate.setFixedWidth(44);self.ruler_calibrate.clicked.connect(self.begin_ruler_calibration);ruler_layout.addWidget(self.ruler_calibrate)
+        self.ruler_calibrate=QPushButton('校正');self.ruler_calibrate.setFixedWidth(44);self.ruler_calibrate.clicked.connect(self.begin_ruler_calibration)
         self.ruler_known_frame=QWidget();known_layout=QHBoxLayout(self.ruler_known_frame);known_layout.setContentsMargins(0,0,0,0);known_layout.setSpacing(4)
         self.ruler_known=QLineEdit();self.ruler_known.setPlaceholderText('既知の長さ');self.ruler_known.setFixedWidth(86);known_layout.addWidget(self.ruler_known);known_layout.addWidget(QLabel('mm'))
         self.ruler_cancel=QPushButton('中止');self.ruler_cancel.setFixedWidth(44);self.ruler_cancel.clicked.connect(lambda:self.set_mode('pan'));known_layout.addWidget(self.ruler_cancel);ruler_layout.addWidget(self.ruler_known_frame)
-        for retained in (self.ruler_bar,self.ruler_known_frame,self.panel.numeric_frame):
+        for retained in (self.ruler_bar,self.ruler_known_frame,self.ruler_calibrate,self.panel.numeric_frame):
             policy=retained.sizePolicy();policy.setRetainSizeWhenHidden(True);retained.setSizePolicy(policy)
-        self.ruler_known_frame.hide();self.ruler_bar.hide();tools_row.insertWidget(5,self.ruler_bar)
+        self.ruler_known_frame.hide();self.ruler_bar.hide();self.ruler_calibrate.hide();tools_row.insertWidget(5,self.ruler_bar)
         self.panel.calibration_label.hide()
         self.operation_help=QLabel(OPERATION_HINTS[self.panel.current_stage])
         self.tool_hint=QLabel()
@@ -162,11 +162,22 @@ class MainWindow(QMainWindow):
             label.setWordWrap(True)
             label.setProperty('muted',True)
             label.setAlignment(Qt.AlignTop|Qt.AlignLeft)
-        tools_layout.addWidget(self.operation_help)
+        self.operation_help.setProperty('analysisHelp',True)
+        self.operation_help.setMargin(4)
+        self.operation_help_scroll=QScrollArea()
+        self.operation_help_scroll.setWidget(self.operation_help)
+        self.operation_help_scroll.setWidgetResizable(True)
+        self.operation_help_scroll.setFrameShape(QFrame.NoFrame)
+        self.operation_help_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.operation_help_scroll.setFocusPolicy(Qt.NoFocus)
         self.tool_message=QStackedWidget()
         self.tool_message.addWidget(self.tool_hint)
         self.tool_message.addWidget(self.ruler_result)
-        tools_layout.addWidget(self.tool_message)
+        tool_message_row=QHBoxLayout()
+        tool_message_row.addWidget(self.tool_message,1)
+        tool_message_row.addWidget(self.ruler_calibrate,0,Qt.AlignTop)
+        tools_layout.addLayout(tool_message_row)
+        tools_layout.addWidget(self.operation_help_scroll)
         image_layout.addWidget(self.tools_frame);self.statusBar().addPermanentWidget(self.image_info,1);self.image_info.setAlignment(Qt.AlignVCenter|Qt.AlignRight);self.statusBar().setSizeGripEnabled(False);splitter.addWidget(image_panel)
         scroll=QScrollArea(); self.analysis_scroll=scroll;scroll.setWidgetResizable(True);scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); scroll.setWidget(self.panel)
         sidebar=QWidget();sidebar.setMinimumWidth(300);sidebar.setMaximumWidth(460);sidebar_layout=QVBoxLayout(sidebar);sidebar_layout.setContentsMargins(0,0,0,0);sidebar_layout.setSpacing(6)
@@ -213,7 +224,8 @@ class MainWindow(QMainWindow):
         self.view.view_changed.connect(self.update_ruler_result)
         for message in (self.operation_help,self.ruler_result,self.image_info):message.ensurePolished()
         line_height=max(self.operation_help.fontMetrics().lineSpacing(),self.ruler_result.fontMetrics().lineSpacing())
-        self.tool_message.setFixedHeight(line_height*2+4)
+        self.operation_help_scroll.setFixedHeight(self.operation_help.fontMetrics().lineSpacing()*2+14)
+        self.tool_message.setFixedHeight(max(line_height*2+4,self.ruler_calibrate.sizeHint().height()))
         self.image_info.setFixedHeight(self.image_info.fontMetrics().lineSpacing())
         for field,description in [
             (self.path_edit,'解析するTIFFのパスを指定します。Enterでも開けます。'),
@@ -293,6 +305,7 @@ class MainWindow(QMainWindow):
         self.view.set_mode(mode)
         self.sync_image_tool_buttons()
         self.ruler_bar.setVisible(mode=='ruler')
+        self.ruler_calibrate.setVisible(mode=='ruler')
         self.tool_message.setCurrentWidget(self.ruler_result if mode=='ruler' else self.tool_hint)
         if mode=='ruler':self.update_ruler_result();return
         if mode=='circle':
@@ -502,7 +515,7 @@ class MainWindow(QMainWindow):
         if not self._ruler_pair:
             self.ruler_result.setText('画像上の2点を左クリックして測定します。既知長さで校正する場合は「校正」を押してください。');return
         a,b=self._ruler_pair;dx=b.x-a.x;dy=b.y-a.y;distance=math.hypot(dx,dy);c=self.session.calibration
-        self.ruler_result.setText(f'{distance:.6g} px'+(f' ／ {math.hypot(dx*c.sx_mm,dy*c.sy_mm):.6g} mm' if c and not self.session.calibration_error else '（未校正）'))
+        self.ruler_result.setText(f'定規：{distance:.6g} px'+(f' ／ {math.hypot(dx*c.sx_mm,dy*c.sy_mm):.6g} mm' if c and not self.session.calibration_error else '（未校正）'))
     def detect(self,settings):
         s=self.session
         self.panel._identity()

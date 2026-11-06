@@ -311,6 +311,9 @@ def test_display_options_opens_modeless_dialog_from_image_tools(qapp,tmp_path):
 def test_image_tool_help_tracks_analysis_stage_during_measurement(qapp,tmp_path):
     w=MainWindow(database_path=tmp_path/'db.sqlite')
     assert '装置と回転軸' in w.operation_help.text()
+    assert w.operation_help.property('analysisHelp') is True
+    assert w.operation_help_scroll.widget() is w.operation_help
+    assert not w.ruler_result.property('analysisHelp')
     w.set_mode('ruler')
     for stage,text in (
         ('laser','基準点選択'),
